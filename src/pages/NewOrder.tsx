@@ -217,14 +217,14 @@ const NewOrder = () => {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Rate (per KG)</Label>
+              <Label>Rate (per Guni)</Label>
               <div className="relative">
                 <Input value={`₹ ${activeRate}`} readOnly className="bg-muted font-bold text-primary" />
                 {rateLoading && <Loader2 className="w-4 h-4 animate-spin absolute right-3 top-3 text-muted-foreground" />}
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Quantity (KG) *</Label>
+              <Label>Quantity (Guni) *</Label>
               <Input type="number" value={form.quantityKg} onChange={(e) => updateField("quantityKg", e.target.value)} placeholder="Enter weight" />
             </div>
           </div>

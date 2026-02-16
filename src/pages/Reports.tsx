@@ -5,7 +5,10 @@ import PageHeader from "@/components/PageHeader";
 import StatCard from "@/components/StatCard";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { IndianRupee, ShoppingCart, TrendingUp, Calendar } from "lucide-react";
+import { Button } from "@/components/ui/button"; // Button add kiya
+import { IndianRupee, ShoppingCart, TrendingUp, Calendar, FileSpreadsheet } from "lucide-react";
+import { toast } from "sonner";
+import * as XLSX from "xlsx"; // Excel library import
 
 const Reports = () => {
   const [timeFilter, setTimeFilter] = useState("this_year");
@@ -21,7 +24,9 @@ const Reports = () => {
   const filteredOrders = useMemo(() => {
     if (!orders) return [];
     const now = new Date();
-    const startOfDay = new Date(now.setHours(0,0,0,0));
+    
+    // Correct logic for time boundaries
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfYear = new Date(now.getFullYear(), 0, 1);
     
@@ -41,32 +46,61 @@ const Reports = () => {
     const totalSales = filteredOrders.reduce((s, o) => s + Number(o.total_amount), 0);
     const totalKg = filteredOrders.reduce((s, o) => s + Number(o.quantity_kg), 0);
     const count = filteredOrders.length;
-    // Simple profit calculation (assuming 10% margin for demo, since we don't have cost price)
-    // You should add a 'cost_price' column to product_rates and capture it at order time for real profit.
     const estProfit = totalSales * 0.10; 
     
     return { totalSales, totalKg, count, estProfit };
   }, [filteredOrders]);
 
+  // --- EXCEL EXPORT LOGIC ---
+  const exportToExcel = () => {
+    if (filteredOrders.length === 0) {
+      toast.error("Is filter me koi data nahi hai.");
+      return;
+    }
+
+    const dataToExport = filteredOrders.map((o: any) => ({
+      "Order Date": new Date(o.order_date).toLocaleDateString("en-IN"),
+      "Customer": o.customers?.name || "Unknown",
+      "Product": o.product_type,
+      "Quantity (Guni)": o.quantity_kg,
+      "Rate (₹)": o.rate_per_kg,
+      "Total Amount (₹)": o.total_amount,
+      "Status": o.status
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Reports");
+
+    const fileName = `Business_Report_${timeFilter}_${new Date().toISOString().split('T')[0]}.xlsx`;
+    XLSX.writeFile(workbook, fileName);
+    toast.success(`${timeFilter.replace('_', ' ')} report exported!`);
+  };
+
   return (
     <div>
       <PageHeader title="Business Reports" subtitle="Analytics & Performance">
-         <div className="w-[200px]">
-            <Select value={timeFilter} onValueChange={setTimeFilter}>
-                <SelectTrigger><Calendar className="w-4 h-4 mr-2"/> <SelectValue /></SelectTrigger>
-                <SelectContent>
-                    <SelectItem value="today">Today</SelectItem>
-                    <SelectItem value="this_month">This Month</SelectItem>
-                    <SelectItem value="this_year">This Year</SelectItem>
-                    <SelectItem value="all">All Time</SelectItem>
-                </SelectContent>
-            </Select>
+         <div className="flex gap-3">
+            <Button variant="outline" onClick={exportToExcel} className="gap-2">
+                <FileSpreadsheet className="w-4 h-4 text-green-600" /> Export Report
+            </Button>
+            <div className="w-[200px]">
+                <Select value={timeFilter} onValueChange={setTimeFilter}>
+                    <SelectTrigger><Calendar className="w-4 h-4 mr-2"/> <SelectValue /></SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="today">Today</SelectItem>
+                        <SelectItem value="this_month">This Month</SelectItem>
+                        <SelectItem value="this_year">This Year</SelectItem>
+                        <SelectItem value="all">All Time</SelectItem>
+                    </SelectContent>
+                </Select>
+            </div>
          </div>
       </PageHeader>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <StatCard title="Total Sales" value={`₹${stats.totalSales.toLocaleString("en-IN")}`} icon={IndianRupee} variant="success" />
-        <StatCard title="Total KG Sold" value={`${stats.totalKg.toLocaleString()} KG`} icon={TrendingUp} variant="primary" />
+        <StatCard title="Total Guni Sold" value={`${stats.totalKg.toLocaleString()} Guni`} icon={TrendingUp} variant="primary" />
         <StatCard title="Orders Count" value={stats.count} icon={ShoppingCart} variant="default" />
         <StatCard title="Est. Profit (10%)" value={`₹${stats.estProfit.toLocaleString("en-IN")}`} icon={IndianRupee} variant="warning" />
       </div>
@@ -81,14 +115,14 @@ const Reports = () => {
                         <TableHead>Date</TableHead>
                         <TableHead>Customer</TableHead>
                         <TableHead>Product</TableHead>
-                        <TableHead className="text-right">Qty (KG)</TableHead>
+                        <TableHead className="text-right">Qty (Guni)</TableHead>
                         <TableHead className="text-right">Amount</TableHead>
                         <TableHead className="text-center">Status</TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
                     {filteredOrders.length === 0 ? (
-                        <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground">No data found</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No data found for this period</TableCell></TableRow>
                     ) : (
                         filteredOrders.map((o: any) => (
                             <TableRow key={o.id}>
@@ -97,7 +131,13 @@ const Reports = () => {
                                 <TableCell>{o.product_type}</TableCell>
                                 <TableCell className="text-right">{o.quantity_kg}</TableCell>
                                 <TableCell className="text-right">₹{o.total_amount}</TableCell>
-                                <TableCell className="text-center">{o.status}</TableCell>
+                                <TableCell className="text-center">
+                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                        o.status === 'delivered' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+                                    }`}>
+                                        {o.status}
+                                    </span>
+                                </TableCell>
                             </TableRow>
                         ))
                     )}

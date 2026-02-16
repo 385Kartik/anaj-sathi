@@ -7,9 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Search, PlusCircle, Printer, Trash2, Edit } from "lucide-react";
+import { Search, PlusCircle, Printer, Trash2, Edit, FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
 import { useReactToPrint } from "react-to-print";
+import * as XLSX from "xlsx";
 
 // --- HINDI TRANSLATION MAP (Product Names) ---
 const productTranslations: Record<string, string> = {
@@ -78,14 +79,49 @@ const Orders = () => {
     o.customers?.phone?.includes(search)
   );
 
+  // --- EXCEL EXPORT FUNCTION ---
+  const exportToExcel = () => {
+    if (!filtered || filtered.length === 0) {
+      toast.error("Koi data nahi hai export karne ke liye.");
+      return;
+    }
+
+    const dataToExport = filtered.map((order: any) => ({
+      "Order No": order.order_number,
+      "Date": new Date(order.order_date).toLocaleDateString("en-IN"),
+      "Customer Name": order.customers?.name,
+      "Phone": order.customers?.phone,
+      "Area": order.customers?.areas?.area_name || "N/A",
+      "Address": order.customers?.address,
+      "Product": order.product_type,
+      "Quantity (Guni)": order.quantity_kg,
+      "Rate (₹)": order.rate_per_kg,
+      "Total Amount (₹)": order.total_amount,
+      "Paid Amount (₹)": order.amount_paid,
+      "Pending Amount (₹)": order.total_amount - order.amount_paid,
+      "Status": order.status
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Orders");
+    XLSX.writeFile(workbook, `Orders_${new Date().toISOString().split('T')[0]}.xlsx`);
+    toast.success("Excel file download ho gayi!");
+  };
+
   return (
     <div>
       <PageHeader title="Orders" subtitle="Manage all orders">
-        <Link to="/orders/new">
-          <Button className="bg-primary text-primary-foreground hover:bg-primary/90 gap-2">
-            <PlusCircle className="w-4 h-4" /> New Order
-          </Button>
-        </Link>
+        <div className="flex gap-2">
+            <Button variant="outline" onClick={exportToExcel} className="gap-2">
+                <FileSpreadsheet className="w-4 h-4 text-green-600" /> Export Excel
+            </Button>
+            <Link to="/orders/new">
+            <Button className="bg-primary text-primary-foreground hover:bg-primary/90 gap-2">
+                <PlusCircle className="w-4 h-4" /> New Order
+            </Button>
+            </Link>
+        </div>
       </PageHeader>
 
       <div className="flex flex-wrap gap-3 mb-6">
@@ -127,7 +163,7 @@ const Orders = () => {
                         <p className="text-xs text-muted-foreground">{order.customers?.phone}</p>
                       </div>
                     </TableCell>
-                    <TableCell>{order.product_type} <span className="text-xs text-muted-foreground">({order.quantity_kg}kg)</span></TableCell>
+                    <TableCell>{order.product_type} <span className="text-xs text-muted-foreground">({order.quantity_kg}Guni)</span></TableCell>
                     <TableCell className="text-right font-medium">₹{Number(order.total_amount).toLocaleString("en-IN")}</TableCell>
                     <TableCell className="text-center">
                       <span className={`text-xs px-2 py-1 rounded-full font-medium ${
@@ -140,9 +176,17 @@ const Orders = () => {
                         <Button size="icon" variant="outline" onClick={() => setPrintOrder(order)} title="Print Slip">
                             <Printer className="w-4 h-4" />
                         </Button>
-                        <Button size="icon" variant="outline" disabled={order.is_printed} onClick={() => navigate(`/orders/edit/${order.id}`)} title={order.is_printed ? "Cannot edit printed order" : "Edit Order"}>
+                        
+                        {/* EDIT BUTTON - Disabled check removed */}
+                        <Button 
+                            size="icon" 
+                            variant="outline" 
+                            onClick={() => navigate(`/orders/edit/${order.id}`)} 
+                            title="Edit Order"
+                        >
                             <Edit className="w-4 h-4" />
                         </Button>
+
                         <Button size="icon" variant="ghost" className="text-destructive hover:bg-destructive/10" onClick={() => {if(confirm("Delete this order? Reports will be affected.")) deleteOrder.mutate(order.id);}}>
                             <Trash2 className="w-4 h-4" />
                         </Button>
@@ -201,7 +245,7 @@ const Orders = () => {
                                 <td style={{ padding: "1.5mm 0" }}>
                                     {productTranslations[printOrder.product_type] || printOrder.product_type}
                                 </td>
-                                <td style={{ textAlign: "right" }}>{printOrder.quantity_kg}kg</td>
+                                <td style={{ textAlign: "right" }}>{printOrder.quantity_kg}Guni</td>
                                 <td style={{ textAlign: "right" }}>₹{printOrder.total_amount}</td>
                             </tr>
                         </tbody>

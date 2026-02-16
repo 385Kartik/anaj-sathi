@@ -8,8 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Search, ArrowUpDown, Filter, Trash2 } from "lucide-react";
+import { Search, ArrowUpDown, Filter, Trash2, FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
+import * as XLSX from "xlsx"; // Excel library
 
 type SortKey = "name" | "area" | "totalAmount" | "totalKg" | "orderCount";
 type SortDir = "asc" | "desc";
@@ -22,6 +23,7 @@ const Customers = () => {
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
+  // --- QUERIES ---
   const { data: customers, isLoading } = useQuery({
     queryKey: ["customers"],
     queryFn: async () => {
@@ -51,6 +53,7 @@ const Customers = () => {
     },
   });
 
+  // --- MUTATIONS ---
   const deleteCustomer = useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase.from("customers").delete().eq("id", id);
@@ -63,6 +66,7 @@ const Customers = () => {
     onError: (e: any) => toast.error(e.message),
   });
 
+  // --- LOGIC: STATS CALCULATION ---
   const customerStats = useMemo(() => {
     const stats: Record<string, {
       totalAmount: number; totalKg: number; orderCount: number;
@@ -83,6 +87,7 @@ const Customers = () => {
     return stats;
   }, [orders]);
 
+  // --- LOGIC: FILTERING & SORTING ---
   const filtered = useMemo(() => {
     let list = customers?.filter((c: any) => {
       if (search && !c.name?.toLowerCase().includes(search.toLowerCase()) && !c.phone?.includes(search)) return false;
@@ -90,7 +95,7 @@ const Customers = () => {
       
       const stats = customerStats?.[c.id];
       if (statusView === "pending" && !stats?.hasPending) return false;
-      if (statusView === "completed" && stats?.hasPending) return false; // Show only if NO pending orders
+      if (statusView === "completed" && stats?.hasPending) return false; 
       
       return true;
     }) || [];
@@ -112,6 +117,36 @@ const Customers = () => {
     return list;
   }, [customers, search, areaFilter, sortKey, sortDir, customerStats, statusView]);
 
+  // --- LOGIC: EXCEL EXPORT ---
+  const exportToExcel = () => {
+    if (filtered.length === 0) {
+      toast.error("No data found for the current view.");
+      return;
+    }
+
+    const dataToExport = filtered.map((c: any) => {
+      const stats = customerStats?.[c.id];
+      return {
+        "Customer Name": c.name,
+        "Phone": c.phone,
+        "Address": c.address || "N/A",
+        "Area": c.areas?.area_name || "N/A",
+        "Total Orders": stats?.orderCount || 0,
+        "Total Quantity (KG)": stats?.totalKg || 0,
+        "Total Bill Amount (₹)": stats?.totalAmount || 0,
+        "Payment Status": stats?.hasPending ? "PENDING" : "CLEAR"
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Customers");
+
+    const fileName = `Customer_Report_${statusView}_${new Date().toISOString().split('T')[0]}.xlsx`;
+    XLSX.writeFile(workbook, fileName);
+    toast.success(`${statusView.toUpperCase()} list exported!`);
+  };
+
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
       setSortDir(sortDir === "asc" ? "desc" : "asc");
@@ -127,7 +162,11 @@ const Customers = () => {
 
   return (
     <div>
-      <PageHeader title="Customers" subtitle="Customer database & history" />
+      <PageHeader title="Customers" subtitle="Customer database & history">
+        <Button variant="outline" onClick={exportToExcel} className="gap-2">
+            <FileSpreadsheet className="w-4 h-4 text-green-600" /> Export {statusView === 'all' ? 'All' : statusView === 'pending' ? 'Pending' : 'Clear'} List
+        </Button>
+      </PageHeader>
 
       {/* Filters */}
       <div className="flex flex-col gap-4 mb-6">
@@ -169,7 +208,7 @@ const Customers = () => {
                 <TableHead>Address</TableHead>
                 <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("area")}>Area <SortIcon col="area" /></TableHead>
                 <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("orderCount")}>Orders <SortIcon col="orderCount" /></TableHead>
-                <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("totalKg")}>Total KG <SortIcon col="totalKg" /></TableHead>
+                <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("totalKg")}>Total Weight <SortIcon col="totalKg" /></TableHead>
                 <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("totalAmount")}>Total Amount <SortIcon col="totalAmount" /></TableHead>
                 <TableHead className="text-center">Status</TableHead>
                 <TableHead className="w-[50px]"></TableHead>
