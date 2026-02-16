@@ -126,7 +126,7 @@ const NewOrder = () => {
       const { error: orderError } = await supabase.from("orders").insert({
         customer_id: customerId, product_type: form.productType, quantity_kg: Number(form.quantityKg),
         rate_per_kg: activeRate, total_amount: totalAmount, amount_paid: Number(form.amountPaid || 0),
-        driver_id: form.driverId, delivery_date: form.deliveryDate || new Date().toISOString().split('T')[0],
+        driver_id: form.driverId || null, delivery_date: form.deliveryDate || new Date().toISOString().split('T')[0],
       });
       if (orderError) throw orderError;
 
@@ -148,7 +148,7 @@ const NewOrder = () => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.customerName || !form.phone || !form.address || !form.areaId || !form.productType || !form.quantityKg || !form.driverId) {
+    if (!form.customerName || !form.phone || !form.address || !form.areaId || !form.productType || !form.quantityKg) {
       toast.error("Please fill all mandatory fields.");
       return;
     }
@@ -262,9 +262,9 @@ const NewOrder = () => {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <Label>Tempo Driver *</Label>
+              <Label>Tempo Driver</Label>
               <Select value={form.driverId} onValueChange={(v) => updateField("driverId", v)}>
-                <SelectTrigger><SelectValue placeholder="Assign driver" /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="Assign driver (Optional)" /></SelectTrigger>
                 <SelectContent>
                   {drivers?.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
                 </SelectContent>
