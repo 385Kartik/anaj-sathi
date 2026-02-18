@@ -8,9 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Search, ArrowUpDown, Filter, Trash2, FileSpreadsheet } from "lucide-react";
+import { Search, ArrowUpDown, Filter, Trash2, FileSpreadsheet, History, UserCheck } from "lucide-react";
 import { toast } from "sonner";
-import * as XLSX from "xlsx"; // Excel library
+import * as XLSX from "xlsx";
 
 type SortKey = "name" | "area" | "totalAmount" | "totalKg" | "orderCount";
 type SortDir = "asc" | "desc";
@@ -19,18 +19,17 @@ const Customers = () => {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [areaFilter, setAreaFilter] = useState("all");
-  const [statusView, setStatusView] = useState("all"); // 'all', 'pending', 'completed'
+  const [statusView, setStatusView] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  
+  const currentYear = new Date().getFullYear();
 
   // --- QUERIES ---
   const { data: customers, isLoading } = useQuery({
     queryKey: ["customers"],
     queryFn: async () => {
-      const { data } = await supabase
-        .from("customers")
-        .select("*, areas(area_name)")
-        .order("name");
+      const { data } = await supabase.from("customers").select("*, areas(area_name)").order("name");
       return data || [];
     },
   });
@@ -38,9 +37,7 @@ const Customers = () => {
   const { data: orders } = useQuery({
     queryKey: ["customer-orders-full"],
     queryFn: async () => {
-      const { data } = await supabase
-        .from("orders")
-        .select("customer_id, total_amount, quantity_kg, product_type, status");
+      const { data } = await supabase.from("orders").select("customer_id, total_amount, quantity_kg, product_type, status, order_date");
       return data || [];
     },
   });
@@ -53,7 +50,6 @@ const Customers = () => {
     },
   });
 
-  // --- MUTATIONS ---
   const deleteCustomer = useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase.from("customers").delete().eq("id", id);
@@ -66,28 +62,30 @@ const Customers = () => {
     onError: (e: any) => toast.error(e.message),
   });
 
-  // --- LOGIC: STATS CALCULATION ---
+  // --- STATS LOGIC (With Year Checking) ---
   const customerStats = useMemo(() => {
     const stats: Record<string, {
       totalAmount: number; totalKg: number; orderCount: number;
-      deliveredCount: number; totalOrders: number; hasPending: boolean;
+      hasPending: boolean; lastOrderYear: number;
     }> = {};
+    
     orders?.forEach((o) => {
       if (!stats[o.customer_id]) {
-        stats[o.customer_id] = { totalAmount: 0, totalKg: 0, orderCount: 0, deliveredCount: 0, totalOrders: 0, hasPending: false };
+        stats[o.customer_id] = { totalAmount: 0, totalKg: 0, orderCount: 0, hasPending: false, lastOrderYear: 0 };
       }
       const s = stats[o.customer_id];
       s.totalAmount += Number(o.total_amount);
       s.totalKg += Number(o.quantity_kg);
       s.orderCount++;
-      s.totalOrders++;
-      if (o.status === "delivered") s.deliveredCount++;
       if (o.status === "pending") s.hasPending = true;
+      
+      const year = new Date(o.order_date).getFullYear();
+      if (year > s.lastOrderYear) s.lastOrderYear = year;
     });
     return stats;
   }, [orders]);
 
-  // --- LOGIC: FILTERING & SORTING ---
+  // --- FILTERING & SORTING ---
   const filtered = useMemo(() => {
     let list = customers?.filter((c: any) => {
       if (search && !c.name?.toLowerCase().includes(search.toLowerCase()) && !c.phone?.includes(search)) return false;
@@ -117,143 +115,128 @@ const Customers = () => {
     return list;
   }, [customers, search, areaFilter, sortKey, sortDir, customerStats, statusView]);
 
-  // --- LOGIC: EXCEL EXPORT ---
-  const exportToExcel = () => {
-    if (filtered.length === 0) {
-      toast.error("No data found for the current view.");
-      return;
-    }
+  // --- SPLIT INTO ACTIVE (NEW YEAR) vs INACTIVE (OLD YEAR) ---
+  const activeCustomers = filtered.filter(c => (customerStats?.[c.id]?.lastOrderYear === currentYear));
+  const pastCustomers = filtered.filter(c => (customerStats?.[c.id]?.lastOrderYear || 0) < currentYear);
 
+  const exportToExcel = () => {
+    if (filtered.length === 0) return toast.error("No data found");
     const dataToExport = filtered.map((c: any) => {
       const stats = customerStats?.[c.id];
       return {
-        "Customer Name": c.name,
-        "Phone": c.phone,
-        "Address": c.address || "N/A",
-        "Area": c.areas?.area_name || "N/A",
-        "Total Orders": stats?.orderCount || 0,
-        "Total Quantity (KG)": stats?.totalKg || 0,
-        "Total Bill Amount (₹)": stats?.totalAmount || 0,
-        "Payment Status": stats?.hasPending ? "PENDING" : "CLEAR"
+        "Group": stats?.lastOrderYear === currentYear ? "Current Year" : "History",
+        "Name": c.name, "Phone": c.phone, "Area": c.areas?.area_name || "N/A",
+        "Orders": stats?.orderCount || 0, "Volume": stats?.totalKg || 0, "Total": stats?.totalAmount || 0,
+        "Status": stats?.hasPending ? "PENDING" : "CLEAR"
       };
     });
-
-    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Customers");
-
-    const fileName = `Customer_Report_${statusView}_${new Date().toISOString().split('T')[0]}.xlsx`;
-    XLSX.writeFile(workbook, fileName);
-    toast.success(`${statusView.toUpperCase()} list exported!`);
+    const ws = XLSX.utils.json_to_sheet(dataToExport);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Customers");
+    XLSX.writeFile(wb, `Customer_Report.xlsx`);
+    toast.success("List exported!");
   };
 
   const toggleSort = (key: SortKey) => {
-    if (sortKey === key) {
-      setSortDir(sortDir === "asc" ? "desc" : "asc");
-    } else {
-      setSortKey(key);
-      setSortDir(key === "name" || key === "area" ? "asc" : "desc");
-    }
+    if (sortKey === key) setSortDir(sortDir === "asc" ? "desc" : "asc");
+    else { setSortKey(key); setSortDir(key === "name" || key === "area" ? "asc" : "desc"); }
   };
 
   const SortIcon = ({ col }: { col: SortKey }) => (
     <ArrowUpDown className={`inline w-3.5 h-3.5 ml-1 ${sortKey === col ? "text-primary" : "text-muted-foreground/50"}`} />
   );
 
+  // --- ROW RENDERER ---
+  const renderRow = (customer: any, isOld: boolean = false) => {
+      const stats = customerStats?.[customer.id];
+      return (
+        <TableRow key={customer.id} className={`hover:bg-muted/30 ${isOld ? "bg-gray-50 opacity-70" : ""}`}>
+          <TableCell className="font-medium">{customer.name}</TableCell>
+          <TableCell>{customer.phone}</TableCell>
+          <TableCell>{customer.address || "-"}</TableCell>
+          <TableCell>{customer.areas?.area_name || "-"}</TableCell>
+          <TableCell className="text-right">{stats?.orderCount || 0}</TableCell>
+          <TableCell className="text-right">{(stats?.totalKg || 0).toLocaleString()} KG</TableCell>
+          <TableCell className="text-right font-medium">₹{(stats?.totalAmount || 0).toLocaleString("en-IN")}</TableCell>
+          <TableCell className="text-center">
+             {stats?.hasPending ? <Badge className="bg-red-100 text-red-700">Pending</Badge> : <Badge className="bg-green-100 text-green-700">Clear</Badge>}
+          </TableCell>
+          <TableCell>
+            <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => { if(confirm("Delete?")) deleteCustomer.mutate(customer.id); }}>
+                <Trash2 className="w-4 h-4" />
+            </Button>
+          </TableCell>
+        </TableRow>
+      );
+  };
+
   return (
     <div>
       <PageHeader title="Customers" subtitle="Customer database & history">
         <Button variant="outline" onClick={exportToExcel} className="gap-2">
-            <FileSpreadsheet className="w-4 h-4 text-green-600" /> Export {statusView === 'all' ? 'All' : statusView === 'pending' ? 'Pending' : 'Clear'} List
+            <FileSpreadsheet className="w-4 h-4 text-green-600" /> Export List
         </Button>
       </PageHeader>
 
-      {/* Filters */}
       <div className="flex flex-col gap-4 mb-6">
         <Tabs value={statusView} onValueChange={setStatusView} className="w-full">
             <TabsList>
-                <TabsTrigger value="all">All Customers</TabsTrigger>
-                <TabsTrigger value="pending">With Pending Orders</TabsTrigger>
-                <TabsTrigger value="completed">Fully Delivered</TabsTrigger>
+                <TabsTrigger value="all">All</TabsTrigger>
+                <TabsTrigger value="pending">Pending</TabsTrigger>
+                <TabsTrigger value="completed">Clear</TabsTrigger>
             </TabsList>
         </Tabs>
-
         <div className="flex flex-wrap gap-3 items-end">
-          <div className="relative flex-1 min-w-[200px] max-w-xs">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or phone..." className="pl-10" />
-          </div>
-          <div className="min-w-[160px]">
-            <Select value={areaFilter} onValueChange={setAreaFilter}>
-              <SelectTrigger><Filter className="w-3.5 h-3.5 mr-2 text-muted-foreground" /><SelectValue placeholder="Area" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Areas</SelectItem>
-                {areas?.map((a: any) => (
-                  <SelectItem key={a.id} value={a.id}>{a.area_name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <div className="relative flex-1 min-w-[200px] max-w-xs"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" /><Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." className="pl-10" /></div>
+          <div className="min-w-[160px]"><Select value={areaFilter} onValueChange={setAreaFilter}><SelectTrigger><Filter className="w-3.5 h-3.5 mr-2 text-muted-foreground" /><SelectValue placeholder="Area" /></SelectTrigger><SelectContent><SelectItem value="all">All Areas</SelectItem>{areas?.map((a: any) => <SelectItem key={a.id} value={a.id}>{a.area_name}</SelectItem>)}</SelectContent></Select></div>
         </div>
       </div>
 
-      {/* Table */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
-                <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("name")}>Name <SortIcon col="name" /></TableHead>
+                <TableHead onClick={() => toggleSort("name")} className="cursor-pointer">Name <SortIcon col="name"/></TableHead>
                 <TableHead>Phone</TableHead>
                 <TableHead>Address</TableHead>
-                <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("area")}>Area <SortIcon col="area" /></TableHead>
-                <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("orderCount")}>Orders <SortIcon col="orderCount" /></TableHead>
-                <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("totalKg")}>Total Weight <SortIcon col="totalKg" /></TableHead>
-                <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("totalAmount")}>Total Amount <SortIcon col="totalAmount" /></TableHead>
+                <TableHead onClick={() => toggleSort("area")} className="cursor-pointer">Area <SortIcon col="area"/></TableHead>
+                <TableHead className="text-right cursor-pointer" onClick={() => toggleSort("orderCount")}>Orders <SortIcon col="orderCount"/></TableHead>
+                <TableHead className="text-right cursor-pointer" onClick={() => toggleSort("totalKg")}>Weight <SortIcon col="totalKg"/></TableHead>
+                <TableHead className="text-right cursor-pointer" onClick={() => toggleSort("totalAmount")}>Total <SortIcon col="totalAmount"/></TableHead>
                 <TableHead className="text-center">Status</TableHead>
                 <TableHead className="w-[50px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {isLoading ? (
-                <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">Loading...</TableCell></TableRow>
-              ) : filtered.length === 0 ? (
-                <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No customers found</TableCell></TableRow>
-              ) : (
-                filtered.map((customer: any) => {
-                  const stats = customerStats?.[customer.id];
-                  return (
-                    <TableRow key={customer.id} className="hover:bg-muted/30">
-                      <TableCell className="font-medium text-foreground">{customer.name}</TableCell>
-                      <TableCell>{customer.phone}</TableCell>
-                      <TableCell className="max-w-[200px] truncate">{customer.address || <span className="text-destructive text-xs">Missing</span>}</TableCell>
-                      <TableCell>{customer.areas?.area_name || "-"}</TableCell>
-                      <TableCell className="text-right">{stats?.orderCount || 0}</TableCell>
-                      <TableCell className="text-right">{(stats?.totalKg || 0).toLocaleString()} KG</TableCell>
-                      <TableCell className="text-right font-medium">₹{(stats?.totalAmount || 0).toLocaleString("en-IN")}</TableCell>
-                      <TableCell className="text-center">
-                         {stats?.hasPending ? 
-                            <Badge className="bg-red-100 text-red-700 border-red-200">Pending</Badge> : 
-                            <Badge className="bg-green-100 text-green-700 border-green-200">Clear</Badge>
-                         }
-                      </TableCell>
-                      <TableCell>
-                        <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="text-destructive hover:text-destructive hover:bg-destructive/10 h-8 w-8"
-                            onClick={() => {
-                                if(confirm("Are you sure? This will delete the customer AND all their order history.")) {
-                                    deleteCustomer.mutate(customer.id);
-                                }
-                            }}
-                        >
-                            <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </TableCell>
+              {isLoading && <TableRow><TableCell colSpan={9} className="text-center py-8">Loading...</TableCell></TableRow>}
+              
+              {/* 1. CURRENT YEAR CUSTOMERS */}
+              {activeCustomers.length > 0 && (
+                <>
+                    <TableRow className="bg-blue-100 hover:bg-blue-100 border-b-2 border-blue-200">
+                        <TableCell colSpan={9} className="text-center font-bold py-2 text-blue-900 flex justify-center items-center gap-2">
+                            <UserCheck className="w-4 h-4"/> CURRENT YEAR CUSTOMERS ({currentYear})
+                        </TableCell>
                     </TableRow>
-                  );
-                })
+                    {activeCustomers.map(c => renderRow(c, false))}
+                </>
+              )}
+
+              {/* 2. DIVIDER FOR OLD DATA */}
+              {pastCustomers.length > 0 && (
+                <>
+                    <TableRow className="bg-amber-100 hover:bg-amber-100 border-y-2 border-amber-300 mt-4">
+                        <TableCell colSpan={9} className="text-center font-bold py-2 text-amber-900 flex justify-center items-center gap-2">
+                            <History className="w-4 h-4"/> PREVIOUS YEAR HISTORY
+                        </TableCell>
+                    </TableRow>
+                    {pastCustomers.map(c => renderRow(c, true))}
+                </>
+              )}
+
+              {activeCustomers.length === 0 && pastCustomers.length === 0 && !isLoading && (
+                  <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No customers found</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
