@@ -82,7 +82,7 @@ const Dashboard = () => {
           variant="warning"
         />
         <StatCard title="Total Customers" value={totalCustomers ?? 0} icon={Users} variant="success" />
-        <StatCard title="Total Stock" value={`${totalStock.toLocaleString()} KG`} icon={Package} variant="default" />
+        <StatCard title="Total Stock" value={`${totalStock.toLocaleString()} Guni`} icon={Package} variant="default" />
       </div>
 
       {/* Stock breakdown */}
@@ -96,7 +96,7 @@ const Dashboard = () => {
               <div key={item.id} className="flex items-center justify-between py-2 border-b border-border last:border-0">
                 <span className="font-medium text-foreground">{item.product_type}</span>
                 <div className="flex items-center gap-3">
-                  <span className="text-muted-foreground">{Number(item.quantity_kg).toLocaleString()} KG</span>
+                  <span className="text-muted-foreground">{Number(item.quantity_kg).toLocaleString()} Guni</span>
                   {Number(item.quantity_kg) <= Number(item.low_stock_threshold) && (
                     <span className="text-xs bg-destructive/10 text-destructive px-2 py-0.5 rounded-full">Low</span>
                   )}
@@ -117,7 +117,7 @@ const Dashboard = () => {
                   <div>
                     <p className="font-medium text-foreground">{order.customers?.name}</p>
                     <p className="text-xs text-muted-foreground">
-                      {order.product_type} · {Number(order.quantity_kg)} KG
+                      {order.product_type} · {Number(order.quantity_kg)} Guni
                     </p>
                   </div>
                   <div className="text-right">

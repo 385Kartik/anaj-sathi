@@ -66,7 +66,7 @@ const Reports = () => {
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <StatCard title="Sales (Current)" value={`₹${currentStats.totalSales.toLocaleString("en-IN")}`} icon={IndianRupee} variant="success" />
-            <StatCard title="Volume (Current)" value={`${currentStats.totalKg.toLocaleString()} KG`} icon={TrendingUp} variant="primary" />
+            <StatCard title="Volume (Current)" value={`${currentStats.totalKg.toLocaleString()} Guni`} icon={TrendingUp} variant="primary" />
             <StatCard title="Orders (Current)" value={currentStats.count} icon={ShoppingCart} variant="default" />
         </div>
       </div>
@@ -88,7 +88,7 @@ const Reports = () => {
             <>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
                     <StatCard title="Total Past Sales" value={`₹${pastStats.totalSales.toLocaleString("en-IN")}`} icon={IndianRupee} variant="warning" />
-                    <StatCard title="Total Past Volume" value={`${pastStats.totalKg.toLocaleString()} KG`} icon={TrendingUp} variant="warning" />
+                    <StatCard title="Total Past Volume" value={`${pastStats.totalKg.toLocaleString()} Guni`} icon={TrendingUp} variant="warning" />
                     <StatCard title="Total Past Orders" value={pastStats.count} icon={ShoppingCart} variant="warning" />
                 </div>
 

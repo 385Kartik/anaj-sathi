@@ -52,13 +52,13 @@ const SettingsPage = () => {
         // 2. Create a new "Null" order for each customer for the current date
         const newYearOrders = customers.map(c => ({
             customer_id: c.id,
-            product_type: "Other", // Using "Other" as Null
+            product_type: "Null",
             quantity_kg: 0,
             rate_per_kg: 0,
             total_amount: 0,
             amount_paid: 0,
             status: "pending",
-            sub_area: "New Year Entry",
+            sub_area: "New Year (Add Sub Area To Display Here)",
             notes: "Auto-generated for new year carry forward"
         }));
 
@@ -106,15 +106,11 @@ const SettingsPage = () => {
       <div className="bg-card border rounded-xl p-6">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-lg font-bold">Product Varieties</h2>
-          <Button onClick={() => setProductModalOpen(true)}>+ Add Variety</Button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {globalProducts?.map(p => (
             <div key={p.id} className="flex justify-between items-center bg-muted p-3 rounded-lg">
               <span className="font-medium">{p.product_type}</span>
-              <Button variant="ghost" size="icon" onClick={() => { if(confirm(`Delete product "${p.product_type}"?`)) deleteProduct.mutate(p.product_type); }}>
-                <Trash2 className="w-4 h-4 text-destructive"/>
-              </Button>
             </div>
           ))}
         </div>

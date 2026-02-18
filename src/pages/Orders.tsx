@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Search, PlusCircle, Printer, Trash2, Edit, FileSpreadsheet, Truck, History } from "lucide-react"; // History icon added
+import { Search, PlusCircle, Printer, Trash2, Edit, FileSpreadsheet, Truck, History, Filter } from "lucide-react";
 import { toast } from "sonner";
 import { useReactToPrint } from "react-to-print";
 import * as XLSX from "xlsx";
@@ -32,6 +32,7 @@ const Orders = () => {
   const [searchPhone, setSearchPhone] = useState("");
   const [areaFilter, setAreaFilter] = useState("all");
   const [subAreaSearch, setSubAreaSearch] = useState("");
+  const [paymentFilter, setPaymentFilter] = useState("all"); // NEW: Pending/Paid Filter
 
   // --- BULK PRINT STATE ---
   const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
@@ -49,9 +50,10 @@ const Orders = () => {
   const { data: orders } = useQuery({
     queryKey: ["orders"],
     queryFn: async () => {
+      // FIX: Added 'area_id' to customers selection so filter works
       let query = supabase
         .from("orders")
-        .select("*, customers(name, phone, address, areas(area_name)), drivers(name, phone)")
+        .select("*, customers(name, phone, address, area_id, areas(area_name)), drivers(name, phone)")
         .order("created_at", { ascending: false });
       const { data } = await query;
       return data || [];
@@ -62,9 +64,20 @@ const Orders = () => {
   const filtered = orders?.filter((o: any) => {
     const matchesName = !searchName || o.customers?.name?.toLowerCase().includes(searchName.toLowerCase());
     const matchesPhone = !searchPhone || o.customers?.phone?.includes(searchPhone);
-    const matchesArea = areaFilter === "all" || o.customers?.areas?.id === areaFilter;
+    
+    // FIX: Area Filter Logic
+    const matchesArea = areaFilter === "all" || o.customers?.area_id === areaFilter;
+    
     const matchesSubArea = !subAreaSearch || o.sub_area?.toLowerCase().includes(subAreaSearch.toLowerCase());
-    return matchesName && matchesPhone && matchesArea && matchesSubArea;
+
+    // NEW: Payment Status Filter Logic
+    const pendingAmount = o.total_amount - o.amount_paid;
+    const matchesPayment = 
+        paymentFilter === "all" ? true :
+        paymentFilter === "pending" ? pendingAmount > 0 :
+        paymentFilter === "paid" ? pendingAmount <= 0 : true;
+
+    return matchesName && matchesPhone && matchesArea && matchesSubArea && matchesPayment;
   });
 
   // --- SPLIT DATA LOGIC (NEW YEAR vs OLD YEAR) ---
@@ -115,6 +128,7 @@ const Orders = () => {
       "Qty (KG)": order.quantity_kg,
       "Total Amount": order.total_amount,
       "Pending Amount": order.total_amount - order.amount_paid,
+      "Status": (order.total_amount - order.amount_paid) > 0 ? "Pending" : "Paid",
       "Driver Name": order.drivers?.name || "Not Assigned",
       "Driver Phone": order.drivers?.phone || "-"
     }));
@@ -126,7 +140,7 @@ const Orders = () => {
     toast.success("Excel downloaded");
   };
 
-  // --- RENDER ROW HELPER (To avoid code duplication) ---
+  // --- RENDER ROW HELPER ---
   const renderRow = (order: any, isOld: boolean = false) => {
       const pending = order.total_amount - order.amount_paid;
       return (
@@ -183,16 +197,21 @@ const Orders = () => {
         </div>
       </PageHeader>
 
-      {/* FILTERS */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6 bg-card p-4 rounded-xl border shadow-sm">
+      {/* --- FILTERS SECTION --- */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6 bg-card p-4 rounded-xl border shadow-sm">
+        {/* Name Search */}
         <div className="relative">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input value={searchName} onChange={e => setSearchName(e.target.value)} placeholder="Search Name..." className="pl-8 h-9" />
         </div>
+        
+        {/* Phone Search */}
         <div className="relative">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input value={searchPhone} onChange={e => setSearchPhone(e.target.value)} placeholder="Search Phone..." className="pl-8 h-9" />
         </div>
+        
+        {/* Area Filter */}
         <Select value={areaFilter} onValueChange={setAreaFilter}>
              <SelectTrigger className="h-9"><SelectValue placeholder="Filter Area" /></SelectTrigger>
              <SelectContent>
@@ -200,9 +219,22 @@ const Orders = () => {
                 {areas?.map((a:any) => <SelectItem key={a.id} value={a.id}>{a.area_name}</SelectItem>)}
              </SelectContent>
         </Select>
+
+        {/* Sub Area Filter */}
         <Input value={subAreaSearch} onChange={e => setSubAreaSearch(e.target.value)} placeholder="Filter Sub Area..." className="h-9" />
+
+        {/* Payment Filter (NEW) */}
+        <Select value={paymentFilter} onValueChange={setPaymentFilter}>
+             <SelectTrigger className="h-9"><SelectValue placeholder="Payment Status" /></SelectTrigger>
+             <SelectContent>
+                <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="pending">Pending Payment</SelectItem>
+                <SelectItem value="paid">Paid / Clear</SelectItem>
+             </SelectContent>
+        </Select>
       </div>
 
+      {/* --- ORDERS TABLE --- */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <Table>
@@ -225,7 +257,7 @@ const Orders = () => {
               {/* 1. CURRENT YEAR DATA */}
               {currentOrders.map((order: any) => renderRow(order, false))}
 
-              {/* 2. VISUAL DIVIDER */}
+              {/* 2. VISUAL DIVIDER (Only shows if there is past data) */}
               {pastOrders.length > 0 && (
                   <TableRow className="bg-amber-100 hover:bg-amber-100 border-y-2 border-amber-300">
                       <TableCell colSpan={10} className="text-center py-2 font-bold text-amber-800 flex justify-center items-center gap-2">
@@ -246,7 +278,7 @@ const Orders = () => {
         </div>
       </div>
 
-      {/* PRINT SLIP DESIGN */}
+      {/* --- PRINT SLIP (UNCHANGED) --- */}
       <div style={{ display: "none" }}>
         <div ref={printRef}>
             {filtered?.filter((o:any) => selectedOrders.includes(o.id)).map((order:any) => (
