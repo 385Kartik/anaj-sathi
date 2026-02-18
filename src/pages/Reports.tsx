@@ -3,147 +3,121 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import PageHeader from "@/components/PageHeader";
 import StatCard from "@/components/StatCard";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Button } from "@/components/ui/button"; // Button add kiya
-import { IndianRupee, ShoppingCart, TrendingUp, Calendar, FileSpreadsheet } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { IndianRupee, ShoppingCart, TrendingUp, Calendar, FileSpreadsheet, History, Clock } from "lucide-react";
 import { toast } from "sonner";
-import * as XLSX from "xlsx"; // Excel library import
+import * as XLSX from "xlsx";
 
 const Reports = () => {
-  const [timeFilter, setTimeFilter] = useState("this_year");
+  const currentYear = new Date().getFullYear();
 
   const { data: orders } = useQuery({
     queryKey: ["all-orders-report"],
     queryFn: async () => {
-      const { data } = await supabase.from("orders").select("*, customers(name)");
+      const { data } = await supabase.from("orders").select("*, customers(name)").order("order_date", { ascending: false });
       return data || [];
     },
   });
 
-  const filteredOrders = useMemo(() => {
-    if (!orders) return [];
-    const now = new Date();
-    
-    // Correct logic for time boundaries
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const startOfYear = new Date(now.getFullYear(), 0, 1);
-    
-    return orders.filter(o => {
-        const d = new Date(o.order_date);
-        switch(timeFilter) {
-            case "today": return d >= startOfDay;
-            case "this_month": return d >= startOfMonth;
-            case "this_year": return d >= startOfYear;
-            case "all": return true;
-            default: return true;
-        }
-    });
-  }, [orders, timeFilter]);
+  // --- SEPARATE DATA ---
+  const thisYearOrders = useMemo(() => orders?.filter((o: any) => new Date(o.order_date).getFullYear() === currentYear) || [], [orders]);
+  const pastOrders = useMemo(() => orders?.filter((o: any) => new Date(o.order_date).getFullYear() < currentYear) || [], [orders]);
 
-  const stats = useMemo(() => {
-    const totalSales = filteredOrders.reduce((s, o) => s + Number(o.total_amount), 0);
-    const totalKg = filteredOrders.reduce((s, o) => s + Number(o.quantity_kg), 0);
-    const count = filteredOrders.length;
-    const estProfit = totalSales * 0.10; 
-    
-    return { totalSales, totalKg, count, estProfit };
-  }, [filteredOrders]);
+  // --- STATS CALCULATOR ---
+  const calculateStats = (data: any[]) => {
+    const totalSales = data.reduce((s, o) => s + Number(o.total_amount), 0);
+    const totalKg = data.reduce((s, o) => s + Number(o.quantity_kg), 0);
+    const count = data.length;
+    return { totalSales, totalKg, count };
+  };
 
-  // --- EXCEL EXPORT LOGIC ---
-  const exportToExcel = () => {
-    if (filteredOrders.length === 0) {
-      toast.error("Is filter me koi data nahi hai.");
-      return;
-    }
+  const currentStats = calculateStats(thisYearOrders);
+  const pastStats = calculateStats(pastOrders);
 
-    const dataToExport = filteredOrders.map((o: any) => ({
-      "Order Date": new Date(o.order_date).toLocaleDateString("en-IN"),
+  const exportReport = () => {
+    if (!orders || orders.length === 0) return toast.error("No data");
+    const dataToExport = orders.map((o: any) => ({
+      "Type": new Date(o.order_date).getFullYear() === currentYear ? "Current Year" : "History",
+      "Date": new Date(o.order_date).toLocaleDateString("en-IN"),
       "Customer": o.customers?.name || "Unknown",
       "Product": o.product_type,
-      "Quantity (Guni)": o.quantity_kg,
-      "Rate (₹)": o.rate_per_kg,
-      "Total Amount (₹)": o.total_amount,
-      "Status": o.status
+      "Qty": o.quantity_kg,
+      "Amount": o.total_amount,
     }));
-
-    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Reports");
-
-    const fileName = `Business_Report_${timeFilter}_${new Date().toISOString().split('T')[0]}.xlsx`;
-    XLSX.writeFile(workbook, fileName);
-    toast.success(`${timeFilter.replace('_', ' ')} report exported!`);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dataToExport), "Full Report");
+    XLSX.writeFile(wb, `Business_Report.xlsx`);
+    toast.success("Downloaded!");
   };
 
   return (
-    <div>
-      <PageHeader title="Business Reports" subtitle="Analytics & Performance">
-         <div className="flex gap-3">
-            <Button variant="outline" onClick={exportToExcel} className="gap-2">
-                <FileSpreadsheet className="w-4 h-4 text-green-600" /> Export Report
-            </Button>
-            <div className="w-[200px]">
-                <Select value={timeFilter} onValueChange={setTimeFilter}>
-                    <SelectTrigger><Calendar className="w-4 h-4 mr-2"/> <SelectValue /></SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="today">Today</SelectItem>
-                        <SelectItem value="this_month">This Month</SelectItem>
-                        <SelectItem value="this_year">This Year</SelectItem>
-                        <SelectItem value="all">All Time</SelectItem>
-                    </SelectContent>
-                </Select>
-            </div>
-         </div>
+    <div className="space-y-8">
+      <PageHeader title="Business Reports" subtitle="Yearly Performance & Analytics">
+         <Button variant="outline" onClick={exportReport} className="gap-2">
+            <FileSpreadsheet className="w-4 h-4 text-green-600" /> Export Full Report
+         </Button>
       </PageHeader>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <StatCard title="Total Sales" value={`₹${stats.totalSales.toLocaleString("en-IN")}`} icon={IndianRupee} variant="success" />
-        <StatCard title="Total Guni Sold" value={`${stats.totalKg.toLocaleString()} Guni`} icon={TrendingUp} variant="primary" />
-        <StatCard title="Orders Count" value={stats.count} icon={ShoppingCart} variant="default" />
-        <StatCard title="Est. Profit (10%)" value={`₹${stats.estProfit.toLocaleString("en-IN")}`} icon={IndianRupee} variant="warning" />
+      {/* --- CURRENT YEAR SECTION --- */}
+      <div className="space-y-4">
+        <h2 className="text-xl font-bold flex items-center gap-2 text-primary">
+            <Clock className="w-6 h-6" /> Current Year ({currentYear}) Performance
+        </h2>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <StatCard title="Sales (Current)" value={`₹${currentStats.totalSales.toLocaleString("en-IN")}`} icon={IndianRupee} variant="success" />
+            <StatCard title="Volume (Current)" value={`${currentStats.totalKg.toLocaleString()} KG`} icon={TrendingUp} variant="primary" />
+            <StatCard title="Orders (Current)" value={currentStats.count} icon={ShoppingCart} variant="default" />
+        </div>
       </div>
 
-      <div className="bg-card border border-border rounded-xl p-6">
-        <h2 className="font-display font-semibold text-lg mb-4">Detailed Breakdown ({timeFilter.replace('_', ' ')})</h2>
+      {/* --- DIVIDER --- */}
+      <hr className="border-t-2 border-dashed border-gray-300 my-8" />
+
+      {/* --- PAST YEAR SECTION --- */}
+      <div className="space-y-4 opacity-80">
+        <h2 className="text-xl font-bold flex items-center gap-2 text-amber-700">
+            <History className="w-6 h-6" /> Previous Years History (Old Data)
+        </h2>
         
-        <div className="overflow-x-auto">
-            <Table>
-                <TableHeader>
-                    <TableRow>
-                        <TableHead>Date</TableHead>
-                        <TableHead>Customer</TableHead>
-                        <TableHead>Product</TableHead>
-                        <TableHead className="text-right">Qty (Guni)</TableHead>
-                        <TableHead className="text-right">Amount</TableHead>
-                        <TableHead className="text-center">Status</TableHead>
-                    </TableRow>
-                </TableHeader>
-                <TableBody>
-                    {filteredOrders.length === 0 ? (
-                        <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No data found for this period</TableCell></TableRow>
-                    ) : (
-                        filteredOrders.map((o: any) => (
-                            <TableRow key={o.id}>
-                                <TableCell>{new Date(o.order_date).toLocaleDateString("en-IN")}</TableCell>
-                                <TableCell>{o.customers?.name || "Unknown"}</TableCell>
-                                <TableCell>{o.product_type}</TableCell>
-                                <TableCell className="text-right">{o.quantity_kg}</TableCell>
-                                <TableCell className="text-right">₹{o.total_amount}</TableCell>
-                                <TableCell className="text-center">
-                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                        o.status === 'delivered' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
-                                    }`}>
-                                        {o.status}
-                                    </span>
-                                </TableCell>
-                            </TableRow>
-                        ))
-                    )}
-                </TableBody>
-            </Table>
-        </div>
+        {pastOrders.length === 0 ? (
+            <div className="p-6 bg-amber-50 border border-amber-200 rounded-xl text-center text-amber-800">
+                No history data found for previous years.
+            </div>
+        ) : (
+            <>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                    <StatCard title="Total Past Sales" value={`₹${pastStats.totalSales.toLocaleString("en-IN")}`} icon={IndianRupee} variant="warning" />
+                    <StatCard title="Total Past Volume" value={`${pastStats.totalKg.toLocaleString()} KG`} icon={TrendingUp} variant="warning" />
+                    <StatCard title="Total Past Orders" value={pastStats.count} icon={ShoppingCart} variant="warning" />
+                </div>
+
+                <div className="bg-card border border-border rounded-xl p-6">
+                    <div className="overflow-x-auto">
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>Date</TableHead>
+                                    <TableHead>Customer</TableHead>
+                                    <TableHead>Product</TableHead>
+                                    <TableHead className="text-right">Amount</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {pastOrders.map((o: any) => (
+                                    <TableRow key={o.id}>
+                                        <TableCell>{new Date(o.order_date).toLocaleDateString("en-IN")}</TableCell>
+                                        <TableCell>{o.customers?.name}</TableCell>
+                                        <TableCell>{o.product_type}</TableCell>
+                                        <TableCell className="text-right">₹{o.total_amount}</TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </div>
+                </div>
+            </>
+        )}
       </div>
     </div>
   );
