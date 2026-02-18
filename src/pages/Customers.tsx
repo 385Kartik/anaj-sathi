@@ -109,7 +109,7 @@ const Customers = () => {
       return (
         <TableRow key={customer.id} className={`hover:bg-muted/30 ${isOld ? "bg-gray-50 opacity-70" : ""}`}>
           <TableCell className="font-medium">{customer.name}</TableCell><TableCell>{customer.phone}</TableCell><TableCell className="max-w-[150px] truncate text-xs" title={customer.address}>{customer.address || "-"}</TableCell><TableCell>{customer.areas?.area_name || "-"}</TableCell><TableCell className="text-xs text-muted-foreground">{stats?.latestSubArea || "-"}</TableCell>
-          <TableCell className="text-right">{stats?.orderCount || 0}</TableCell><TableCell className="text-right">{(stats?.totalKg || 0).toLocaleString()} KG</TableCell><TableCell className="text-right font-medium">₹{(stats?.totalAmount || 0).toLocaleString("en-IN")}</TableCell>
+          <TableCell className="text-right">{stats?.orderCount || 0}</TableCell><TableCell className="text-right">{(stats?.totalKg || 0).toLocaleString()} Guni</TableCell><TableCell className="text-right font-medium">₹{(stats?.totalAmount || 0).toLocaleString("en-IN")}</TableCell>
           <TableCell className="text-center">{stats?.hasPending ? <Badge className="bg-red-100 text-red-700">Pending</Badge> : <Badge className="bg-green-100 text-green-700">Clear</Badge>}</TableCell>
           <TableCell><Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => { if(confirm("Delete?")) deleteCustomer.mutate(customer.id); }}><Trash2 className="w-4 h-4" /></Button></TableCell>
         </TableRow>
