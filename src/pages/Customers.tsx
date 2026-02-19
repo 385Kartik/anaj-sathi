@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Search, ArrowUpDown, Filter, Trash2, FileSpreadsheet, History, UserCheck } from "lucide-react";
+import { Search, ArrowUpDown, Filter, Trash2, FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 
@@ -25,7 +25,6 @@ const Customers = () => {
   const [statusView, setStatusView] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
-  const currentYear = new Date().getFullYear();
 
   const { data: customers, isLoading } = useQuery({ queryKey: ["customers"], queryFn: async () => { const { data } = await supabase.from("customers").select("*, areas(area_name)").order("name"); return (data as any[]) || []; } });
   const { data: orders } = useQuery({ queryKey: ["customer-orders-full"], queryFn: async () => { const { data } = await supabase.from("orders").select("customer_id, total_amount, quantity_kg, product_type, status, order_date, sub_area"); return (data as any[]) || []; } });
@@ -41,27 +40,22 @@ const Customers = () => {
 
   // --- STATS LOGIC ---
   const customerStats = useMemo(() => {
-    const stats: Record<string, { totalAmount: number; totalKg: number; orderCount: number; hasPending: boolean; lastOrderYear: number; latestSubArea: string; hasRealProductThisYear: boolean }> = {};
+    const stats: Record<string, { totalAmount: number; totalKg: number; orderCount: number; hasPending: boolean; latestSubArea: string }> = {};
     const sortedOrders = [...(orders || [])].sort((a: any, b: any) => new Date(a.order_date).getTime() - new Date(b.order_date).getTime());
 
     sortedOrders.forEach((o: any) => {
-      if (!stats[o.customer_id]) stats[o.customer_id] = { totalAmount: 0, totalKg: 0, orderCount: 0, hasPending: false, lastOrderYear: 0, latestSubArea: "", hasRealProductThisYear: false };
+      // HIDE LOGIC: Ignore 'Null' and 'Other' completely from stats
+      const pType = (o.product_type || "");
+      if (pType === "null" || pType === "other" || pType === "Null" || pType === "Other") return;
+
+      if (!stats[o.customer_id]) stats[o.customer_id] = { totalAmount: 0, totalKg: 0, orderCount: 0, hasPending: false, latestSubArea: "" };
       const s = stats[o.customer_id];
       s.totalAmount += Number(o.total_amount); s.totalKg += Number(o.quantity_kg); s.orderCount++;
       if (o.status === "pending") s.hasPending = true;
-      
-      const year = new Date(o.order_date).getFullYear();
-      if (year > s.lastOrderYear) s.lastOrderYear = year;
       if (o.sub_area) s.latestSubArea = o.sub_area;
-
-      // HIDE LOGIC: IF product is 'Null', do not count as real activity
-      const pType = (o.product_type || "").toLowerCase();
-      if (year === currentYear && pType !== "null" && pType !== "other") {
-          s.hasRealProductThisYear = true;
-      }
     });
     return stats;
-  }, [orders, currentYear]);
+  }, [orders]);
 
   // --- FILTERING ---
   const filtered = useMemo(() => {
@@ -69,8 +63,8 @@ const Customers = () => {
       const stats = customerStats?.[c.id];
       const subArea = stats?.latestSubArea || "";
 
-      // HIDE IF ONLY NULL PRODUCT EXISTS IN CURRENT YEAR
-      if (stats?.lastOrderYear === currentYear && !stats?.hasRealProductThisYear) return false;
+      // HIDE CUSTOMER ENTIRELY IF THEY HAVE NO VALID ORDERS (Only Null/Other)
+      if (!stats || stats.orderCount === 0) return false;
 
       if (filterName && !c.name?.toLowerCase().includes(filterName.toLowerCase())) return false;
       if (filterPhone && !c.phone?.includes(filterPhone)) return false;
@@ -96,18 +90,15 @@ const Customers = () => {
       return sortDir === "asc" ? cmp : -cmp;
     });
     return list;
-  }, [customers, filterName, filterPhone, filterAddress, filterArea, filterSubArea, sortKey, sortDir, customerStats, statusView, currentYear]);
-
-  const activeCustomers = filtered.filter((c: any) => (customerStats?.[c.id]?.lastOrderYear === currentYear));
-  const pastCustomers = filtered.filter((c: any) => (customerStats?.[c.id]?.lastOrderYear || 0) < currentYear);
+  }, [customers, filterName, filterPhone, filterAddress, filterArea, filterSubArea, sortKey, sortDir, customerStats, statusView]);
 
   const toggleSort = (key: SortKey) => { if (sortKey === key) setSortDir(sortDir === "asc" ? "desc" : "asc"); else { setSortKey(key); setSortDir(key === "name" || key === "area" || key === "subArea" ? "asc" : "desc"); } };
   const SortIcon = ({ col }: { col: SortKey }) => (<ArrowUpDown className={`inline w-3.5 h-3.5 ml-1 ${sortKey === col ? "text-primary" : "text-muted-foreground/50"}`} />);
 
-  const renderRow = (customer: any, isOld: boolean = false) => {
+  const renderRow = (customer: any) => {
       const stats = customerStats?.[customer.id];
       return (
-        <TableRow key={customer.id} className={`hover:bg-muted/30 ${isOld ? "bg-gray-50 opacity-70" : ""}`}>
+        <TableRow key={customer.id} className="hover:bg-muted/30">
           <TableCell className="font-medium">{customer.name}</TableCell><TableCell>{customer.phone}</TableCell><TableCell className="max-w-[150px] truncate text-xs" title={customer.address}>{customer.address || "-"}</TableCell><TableCell>{customer.areas?.area_name || "-"}</TableCell><TableCell className="text-xs text-muted-foreground">{stats?.latestSubArea || "-"}</TableCell>
           <TableCell className="text-right">{stats?.orderCount || 0}</TableCell><TableCell className="text-right">{(stats?.totalKg || 0).toLocaleString()} Guni</TableCell><TableCell className="text-right font-medium">₹{(stats?.totalAmount || 0).toLocaleString("en-IN")}</TableCell>
           <TableCell className="text-center">{stats?.hasPending ? <Badge className="bg-red-100 text-red-700">Pending</Badge> : <Badge className="bg-green-100 text-green-700">Clear</Badge>}</TableCell>
@@ -116,11 +107,11 @@ const Customers = () => {
       );
   };
 
-  const exportToExcel = () => { if (filtered.length === 0) return toast.error("No data"); const data = filtered.map((c: any) => ({ "Group": customerStats?.[c.id]?.lastOrderYear === currentYear ? "Current" : "History", "Name": c.name, "Phone": c.phone, "Area": c.areas?.area_name, "Sub Area": customerStats?.[c.id]?.latestSubArea })); const ws = XLSX.utils.json_to_sheet(data); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Cust"); XLSX.writeFile(wb, "Customers.xlsx"); toast.success("Exported"); };
+  const exportToExcel = () => { if (filtered.length === 0) return toast.error("No data"); const data = filtered.map((c: any) => ({ "Name": c.name, "Phone": c.phone, "Area": c.areas?.area_name, "Sub Area": customerStats?.[c.id]?.latestSubArea })); const ws = XLSX.utils.json_to_sheet(data); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Cust"); XLSX.writeFile(wb, "Customers.xlsx"); toast.success("Exported"); };
 
   return (
     <div>
-      <PageHeader title="Customers" subtitle="Customer database & history"><Button variant="outline" onClick={exportToExcel} className="gap-2"><FileSpreadsheet className="w-4 h-4 text-green-600" /> Export List</Button></PageHeader>
+      <PageHeader title="Customers" subtitle="Customer database"><Button variant="outline" onClick={exportToExcel} className="gap-2"><FileSpreadsheet className="w-4 h-4 text-green-600" /> Export List</Button></PageHeader>
       <div className="flex flex-col gap-4 mb-6">
         <Tabs value={statusView} onValueChange={setStatusView} className="w-full"><TabsList><TabsTrigger value="all">All</TabsTrigger><TabsTrigger value="pending">Pending</TabsTrigger><TabsTrigger value="completed">Clear</TabsTrigger></TabsList></Tabs>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 bg-card p-4 rounded-xl border shadow-sm">
@@ -135,9 +126,8 @@ const Customers = () => {
         <div className="overflow-x-auto"><Table><TableHeader><TableRow className="bg-muted/50"><TableHead onClick={() => toggleSort("name")} className="cursor-pointer">Name <SortIcon col="name"/></TableHead><TableHead>Phone</TableHead><TableHead>Address</TableHead><TableHead onClick={() => toggleSort("area")} className="cursor-pointer">Area <SortIcon col="area"/></TableHead><TableHead onClick={() => toggleSort("subArea")} className="cursor-pointer">Sub Area <SortIcon col="subArea"/></TableHead><TableHead className="text-right cursor-pointer" onClick={() => toggleSort("orderCount")}>Orders <SortIcon col="orderCount"/></TableHead><TableHead className="text-right cursor-pointer" onClick={() => toggleSort("totalKg")}>Weight <SortIcon col="totalKg"/></TableHead><TableHead className="text-right cursor-pointer" onClick={() => toggleSort("totalAmount")}>Total <SortIcon col="totalAmount"/></TableHead><TableHead className="text-center">Status</TableHead><TableHead className="w-[50px]"></TableHead></TableRow></TableHeader>
         <TableBody>
             {isLoading && <TableRow><TableCell colSpan={10} className="text-center py-8">Loading...</TableCell></TableRow>}
-            {activeCustomers.length > 0 && <><TableRow className="bg-blue-100 hover:bg-blue-100 border-b-2 border-blue-200"><TableCell colSpan={10} className="text-center font-bold py-2 text-blue-900 flex justify-center items-center gap-2"><UserCheck className="w-4 h-4"/> CURRENT YEAR CUSTOMERS ({currentYear})</TableCell></TableRow>{activeCustomers.map(c => renderRow(c, false))}</>}
-            {pastCustomers.length > 0 && <><TableRow className="bg-amber-100 hover:bg-amber-100 border-y-2 border-amber-300 mt-4"><TableCell colSpan={10} className="text-center font-bold py-2 text-amber-900 flex justify-center items-center gap-2"><History className="w-4 h-4"/> PREVIOUS YEAR HISTORY</TableCell></TableRow>{pastCustomers.map(c => renderRow(c, true))}</>}
-            {activeCustomers.length === 0 && pastCustomers.length === 0 && !isLoading && <TableRow><TableCell colSpan={10} className="text-center py-8 text-muted-foreground">No customers found</TableCell></TableRow>}
+            {!isLoading && filtered.length > 0 && filtered.map(c => renderRow(c))}
+            {!isLoading && filtered.length === 0 && <TableRow><TableCell colSpan={10} className="text-center py-8 text-muted-foreground">No customers found</TableCell></TableRow>}
         </TableBody></Table></div></div>
     </div>
   );

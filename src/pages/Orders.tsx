@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Link, useNavigate } from "react-router-dom";
@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Search, PlusCircle, Printer, Trash2, Edit, FileSpreadsheet, Truck, History, Filter } from "lucide-react";
+import { Search, PlusCircle, Printer, Trash2, Edit, FileSpreadsheet, Truck, History, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { useReactToPrint } from "react-to-print";
 import * as XLSX from "xlsx";
@@ -55,11 +55,25 @@ const Orders = () => {
       let query = supabase
         .from("orders")
         .select("*, customers(name, phone, address, area_id, areas(area_name)), drivers(name, phone)")
-        .order("created_at", { ascending: false });
+        // Bulk order me time same ho sakta hai isliye order_number se descending fetch karenge
+        .order("order_number", { ascending: false }); 
       const { data } = await query;
       return data || [];
     },
   });
+
+  // --- DYNAMIC SERIAL NUMBER LOGIC (FIXED) ---
+  const orderNumberMap = useMemo(() => {
+    const map = new Map();
+    if (!orders) return map;
+    // Puraane orders ko strictly original 'order_number' ke ascending order mein sort karenge
+    // Isse chahe bulk entry ka time same ho, sequence 100% perfect rahega
+    const sortedForNumbering = [...orders].sort((a: any, b: any) => a.order_number - b.order_number);
+    sortedForNumbering.forEach((o: any, index: number) => {
+        map.set(o.id, index + 1); // Exact continuous numbers: 1, 2, 3, 4
+    });
+    return map;
+  }, [orders]);
 
   // --- UPDATE STATUS MUTATION ---
   const updateStatus = useMutation({
@@ -74,13 +88,41 @@ const Orders = () => {
     onError: (e: any) => toast.error(e.message)
   });
 
+  // --- CLEAR OLD ORDERS MUTATION ---
+  const clearOldOrders = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase
+        .from("orders")
+        .delete()
+        .neq("product_type", "Null"); 
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Old orders cleared successfully! Only New Year entries remain.");
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+    },
+    onError: (e: any) => toast.error("Error: " + e.message)
+  });
+
+  // --- DELETE SINGLE ORDER ---
+  const deleteOrder = useMutation({
+    mutationFn: async (id: string) => {
+        const { error } = await supabase.from("orders").delete().eq("id", id);
+        if(error) throw error;
+    },
+    onSuccess: () => {
+        toast.success("Order deleted");
+        queryClient.invalidateQueries({ queryKey: ["orders"] });
+    }
+  });
+
   // --- FILTER LOGIC ---
   const filtered = orders?.filter((o: any) => {
     const matchesName = !searchName || o.customers?.name?.toLowerCase().includes(searchName.toLowerCase());
     const matchesPhone = !searchPhone || o.customers?.phone?.includes(searchPhone);
     const matchesArea = areaFilter === "all" || o.customers?.area_id === areaFilter;
     
-    // Sub Area Filter (ignores 'New Year Entry' text logic)
     const subAreaDisplay = o.sub_area === "New Year Entry" ? "" : o.sub_area;
     const matchesSubArea = !subAreaSearch || subAreaDisplay?.toLowerCase().includes(subAreaSearch.toLowerCase());
 
@@ -102,18 +144,6 @@ const Orders = () => {
   const currentOrders = filtered?.filter((o: any) => new Date(o.order_date).getFullYear() === currentYear) || [];
   const pastOrders = filtered?.filter((o: any) => new Date(o.order_date).getFullYear() < currentYear) || [];
 
-  // --- DELETE ORDER ---
-  const deleteOrder = useMutation({
-    mutationFn: async (id: string) => {
-        const { error } = await supabase.from("orders").delete().eq("id", id);
-        if(error) throw error;
-    },
-    onSuccess: () => {
-        toast.success("Order deleted");
-        queryClient.invalidateQueries({ queryKey: ["orders"] });
-    }
-  });
-
   // --- ACTIONS ---
   const toggleSelect = (id: string) => {
     setSelectedOrders(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -131,13 +161,13 @@ const Orders = () => {
   const exportToExcel = () => {
     if (!filtered || filtered.length === 0) return toast.error("No data");
     const dataToExport = filtered.map((order: any) => ({
-      "Order No": order.order_number,
+      "Order No": orderNumberMap.get(order.id) || order.order_number, // Export Dynamic ID
       "Date": new Date(order.order_date).toLocaleDateString("en-IN"),
       "Customer": order.customers?.name,
       "Phone": order.customers?.phone,
       "Address": order.customers?.address,
       "Area": order.customers?.areas?.area_name,
-      "Sub Area": order.sub_area === "New Year Entry" ? "" : order.sub_area, // Clean Export
+      "Sub Area": order.sub_area === "New Year Entry" ? "" : order.sub_area, 
       "Product": order.product_type,
       "Qty (KG)": order.quantity_kg,
       "Total Amount": order.total_amount,
@@ -156,13 +186,12 @@ const Orders = () => {
   // --- RENDER ROW ---
   const renderRow = (order: any, isOld: boolean = false) => {
       const pending = order.total_amount - order.amount_paid;
-      // FIX: Hide 'New Year Entry' text if present in DB
       const displaySubArea = order.sub_area === "New Year Entry" ? "" : order.sub_area;
 
       return (
         <TableRow key={order.id} className={`hover:bg-muted/30 ${isOld ? "opacity-75 bg-gray-50/50" : ""}`}>
             <TableCell><Checkbox checked={selectedOrders.includes(order.id)} onCheckedChange={() => toggleSelect(order.id)} /></TableCell>
-            <TableCell className="font-mono text-xs">{order.order_number}</TableCell>
+            <TableCell className="font-mono text-xs font-bold text-gray-700">{orderNumberMap.get(order.id)}</TableCell>
             <TableCell><div><p className="font-medium text-sm">{order.customers?.name}</p><p className="text-xs text-muted-foreground">{order.customers?.phone}</p></div></TableCell>
             <TableCell><div className="text-sm">{order.customers?.areas?.area_name}</div>{displaySubArea && <div className="text-xs font-medium text-primary">{displaySubArea}</div>}</TableCell>
             <TableCell>{order.product_type}</TableCell>
@@ -187,9 +216,25 @@ const Orders = () => {
   return (
     <div>
       <PageHeader title="Orders" subtitle="Manage orders & printing">
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
             {selectedOrders.length > 0 && <Button onClick={() => handlePrint()} className="bg-purple-600 hover:bg-purple-700 text-white gap-2"><Printer className="w-4 h-4" /> Print Selected ({selectedOrders.length})</Button>}
+            
             <Button variant="outline" onClick={exportToExcel} className="gap-2"><FileSpreadsheet className="w-4 h-4 text-green-600" /> Excel</Button>
+            
+            <Button 
+              variant="destructive" 
+              onClick={() => { 
+                if(confirm("Are you sure? This will delete ALL orders except the 'Null' entries created for the New Year.")) { 
+                  clearOldOrders.mutate(); 
+                } 
+              }}
+              disabled={clearOldOrders.isPending}
+              className="gap-2"
+            >
+              <AlertTriangle className="w-4 h-4" />
+              {clearOldOrders.isPending ? "Clearing..." : "Clear Old Orders"}
+            </Button>
+
             <Link to="/orders/new"><Button className="bg-primary text-primary-foreground gap-2"><PlusCircle className="w-4 h-4" /> New Order</Button></Link>
         </div>
       </PageHeader>
@@ -230,17 +275,15 @@ const Orders = () => {
       <div style={{ display: "none" }}>
         <div ref={printRef}>
             {filtered?.filter((o:any) => selectedOrders.includes(o.id)).map((order:any) => {
-                // Fix for Slip: Don't print "New Year Entry"
                 const slipSubArea = order.sub_area === "New Year Entry" ? "" : order.sub_area;
                 return (
                 <div key={order.id} style={{ width: "80mm", padding: "2mm", fontFamily: "'Noto Sans Devanagari', sans-serif", pageBreakAfter: "always", marginBottom: "5mm" }}>
                     <div style={{ border: "1px solid black", padding: "2mm", minHeight: "300px", position: "relative" }}>
                         <div style={{ textAlign: "center", borderBottom: "1px dashed black", paddingBottom: "2mm", marginBottom: "2mm" }}>
-                            {/* FIX: Header Text */}
                             <h3 style={{ fontSize: "16px", fontWeight: "bold", margin: "0", color: "black" }}>|| स्वामीनारायण विजयते ||</h3>
                             <h2 style={{ fontSize: "22px", fontWeight: "bold", margin: "2px 0 0 0" }}>WHEATFLOW</h2>
                         </div>
-                        <div style={{ fontSize: "12px", marginBottom: "2mm", borderBottom: "1px solid #eee", paddingBottom: "1mm" }}><div style={{ display: "flex", justifyContent: "space-between" }}><span><strong>No:</strong> {order.order_number}</span><span><strong>Date:</strong> {new Date(order.order_date).toLocaleDateString("en-IN")}</span></div></div>
+                        <div style={{ fontSize: "12px", marginBottom: "2mm", borderBottom: "1px solid #eee", paddingBottom: "1mm" }}><div style={{ display: "flex", justifyContent: "space-between" }}><span><strong>No:</strong> {orderNumberMap.get(order.id)}</span><span><strong>Date:</strong> {new Date(order.order_date).toLocaleDateString("en-IN")}</span></div></div>
                         <div style={{ fontSize: "12px", marginBottom: "3mm" }}>
                             <p style={{ fontSize: "10px", color: "#666", margin: "0" }}>ग्राहक (Customer):</p>
                             <p style={{ fontSize: "14px", fontWeight: "bold", margin: "2px 0", textTransform: "uppercase" }}>{order.customers?.name}</p>
@@ -254,7 +297,6 @@ const Orders = () => {
                         </table>
                         <div style={{ fontSize: "16px", borderTop: "1px dashed black", paddingTop: "2mm", textAlign: "right" }}><div style={{ display: "flex", justifyContent: "space-between", fontWeight: "bold" }}><span>कुल (Total):</span><span>₹{order.total_amount}</span></div></div>
                         
-                        {/* FIX: Footer with Line for Signature */}
                         <div style={{ marginTop: "15mm", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
                             <div style={{ fontSize: "10px", maxWidth: "50%" }}>{order.drivers ? (<><div>Delivery By:</div><div style={{ fontWeight: "bold" }}>{order.drivers.name}</div><div>{order.drivers.phone}</div></>) : (<div>Self Pickup</div>)}</div>
                             <div style={{ textAlign: "center" }}>

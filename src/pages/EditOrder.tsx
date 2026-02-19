@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, ArrowLeft } from "lucide-react";
 
-const PRODUCT_TYPES = ["Tukdi", "Sasiya", "Tukdi D", "Sasiya D"];
+const PRODUCT_TYPES = ["Tukdi", "Sasiya", "Tukdi D", "Sasiya D", "Other", "Null"];
 
 const EditOrder = () => {
   const { id } = useParams();
@@ -23,11 +23,32 @@ const EditOrder = () => {
   const [form, setForm] = useState({
     customerName: "",
     phone: "",
+    areaId: "",
+    subArea: "",
+    driverId: "none",
     productType: "",
     quantityKg: "",
     ratePerKg: "",
     amountPaid: "",
     status: ""
+  });
+
+  // Fetch Areas for Dropdown
+  const { data: areas } = useQuery({
+    queryKey: ["areas"],
+    queryFn: async () => {
+      const { data } = await supabase.from("areas").select("*").order("area_name");
+      return data || [];
+    }
+  });
+
+  // Fetch Drivers for Dropdown
+  const { data: drivers } = useQuery({
+    queryKey: ["drivers"],
+    queryFn: async () => {
+      const { data } = await supabase.from("drivers").select("*").order("name");
+      return data || [];
+    }
   });
 
   // Fetch Order Data
@@ -36,12 +57,12 @@ const EditOrder = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("orders")
-        .select("*, customers(name, phone)")
+        .select("*, customers(name, phone, area_id)")
         .eq("id", id)
         .single();
       
       if (error) throw error;
-      return data;
+      return data as any;
     },
   });
 
@@ -52,11 +73,14 @@ const EditOrder = () => {
       setForm({
         customerName: order.customers?.name || "",
         phone: order.customers?.phone || "",
-        productType: order.product_type,
-        quantityKg: String(order.quantity_kg),
-        ratePerKg: String(order.rate_per_kg),
-        amountPaid: String(order.amount_paid),
-        status: order.status
+        areaId: order.customers?.area_id || "",
+        subArea: order.sub_area || "",
+        driverId: order.driver_id || "none",
+        productType: order.product_type || "",
+        quantityKg: String(order.quantity_kg || 0),
+        ratePerKg: String(order.rate_per_kg || 0),
+        amountPaid: String(order.amount_paid || 0),
+        status: order.status || "pending"
       });
     }
   }, [order]);
@@ -69,16 +93,19 @@ const EditOrder = () => {
     mutationFn: async () => {
       if (!originalOrder) return;
 
-      // 1. Update Customer Details (Name/Phone)
+      // 1. Update Customer Details (Name/Phone/Area)
       if (originalOrder.customer_id) {
         await supabase
           .from("customers")
-          .update({ name: form.customerName, phone: form.phone })
+          .update({ 
+            name: form.customerName, 
+            phone: form.phone,
+            area_id: form.areaId 
+          })
           .eq("id", originalOrder.customer_id);
       }
 
-      // 2. Manage Stock Reversal (Dangerous Part)
-      // Logic: First, put back OLD Quantity to OLD Product Stock
+      // 2. Manage Stock Reversal
       const { data: oldStockItem } = await supabase
         .from("stock")
         .select("*")
@@ -100,11 +127,6 @@ const EditOrder = () => {
         .single();
 
       if (newStockItem) {
-        // Note: If old and new product are same, we just fetched the updated stock from step 2, so it's safe.
-        // We need to fetch it FRESH again to be sure, but since we are awaiting, it should be sequential.
-        // Ideally we should re-fetch to be 100% safe, but for this app complexity:
-        
-        // Let's re-fetch to ensure we have the stock AFTER the addition above
         const { data: freshStock } = await supabase.from("stock").select("*").eq("id", newStockItem.id).single();
         
         if(freshStock) {
@@ -115,10 +137,12 @@ const EditOrder = () => {
         }
       }
 
-      // 4. Update the Order
+      // 4. Update the Order (Product, amounts, status, driver, sub_area)
       const { error } = await supabase
         .from("orders")
         .update({
+          sub_area: form.subArea,
+          driver_id: form.driverId === "none" ? null : form.driverId,
           product_type: form.productType,
           quantity_kg: Number(form.quantityKg),
           rate_per_kg: Number(form.ratePerKg),
@@ -132,7 +156,7 @@ const EditOrder = () => {
       if (error) throw error;
     },
     onSuccess: () => {
-      toast.success("Order & Stock updated successfully!");
+      toast.success("Order & Details updated successfully!");
       queryClient.invalidateQueries();
       navigate("/orders");
     },
@@ -142,7 +166,7 @@ const EditOrder = () => {
   if (isLoading) return <div className="flex justify-center p-10"><Loader2 className="animate-spin" /></div>;
 
   return (
-    <div>
+    <div className="pb-10">
       <PageHeader title="Edit Order" subtitle={`Modifying Order #${originalOrder?.order_number}`}>
         <Button variant="outline" onClick={() => navigate("/orders")} className="gap-2">
             <ArrowLeft className="w-4 h-4"/> Back
@@ -164,14 +188,45 @@ const EditOrder = () => {
                <Label>Phone Number</Label>
                <Input value={form.phone} onChange={(e) => setForm({...form, phone: e.target.value})} maxLength={10} />
             </div>
+
+            <div>
+               <Label>Main Area</Label>
+               <Select value={form.areaId} onValueChange={(v) => setForm({...form, areaId: v})}>
+                  <SelectTrigger><SelectValue placeholder="Select Area" /></SelectTrigger>
+                  <SelectContent>
+                    {areas?.map((a: any) => (
+                      <SelectItem key={a.id} value={a.id}>{a.area_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+               </Select>
+            </div>
           </div>
 
           {/* Product & Order Section */}
           <div className="bg-card border border-border rounded-xl p-6 space-y-4">
-            <h3 className="font-semibold text-lg border-b pb-2">Edit Product & Quantity</h3>
+            <h3 className="font-semibold text-lg border-b pb-2">Edit Delivery & Product</h3>
             
+            <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Sub-Area / Location</Label>
+                  <Input value={form.subArea} onChange={(e) => setForm({...form, subArea: e.target.value})} placeholder="e.g. Phase 2" />
+                </div>
+                <div>
+                  <Label>Assign Driver</Label>
+                  <Select value={form.driverId} onValueChange={(v) => setForm({...form, driverId: v})}>
+                    <SelectTrigger><SelectValue placeholder="Select Driver" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Not Assigned (Self Pickup)</SelectItem>
+                      {drivers?.map((d: any) => (
+                        <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+            </div>
+
             <div className="p-3 bg-muted/50 rounded-lg text-sm mb-4">
-                <p><strong>Original Order:</strong> {originalOrder?.product_type} - {originalOrder?.quantity_kg} KG</p>
+                <p><strong>Original Product:</strong> {originalOrder?.product_type} - {originalOrder?.quantity_kg} KG</p>
                 <p className="text-xs text-muted-foreground mt-1">Changing items here will automatically adjust your Stock.</p>
             </div>
 
@@ -215,7 +270,7 @@ const EditOrder = () => {
             </div>
 
             <div>
-                <Label>Status</Label>
+                <Label>Delivery Status</Label>
                 <Select value={form.status} onValueChange={(v) => setForm({...form, status: v})}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>

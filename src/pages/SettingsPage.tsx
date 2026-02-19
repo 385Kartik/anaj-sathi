@@ -36,19 +36,48 @@ const SettingsPage = () => {
   const deleteProduct = useMutation({ mutationFn: async (productType: string) => { const { count } = await supabase.from("orders").select("*", { count: 'exact', head: true }).eq("product_type", productType); if (count && count > 0) throw new Error("Orders exist for this product. Cannot delete."); await supabase.from("stock").delete().eq("product_type", productType); await supabase.from("product_rates").delete().eq("product_type", productType); }, onSuccess: () => { toast.success("Product deleted"); queryClient.invalidateQueries(); }, onError: (e: any) => toast.error(e.message) });
   const saveAreaRates = useMutation({ mutationFn: async () => { const updates = globalProducts?.map(p => ({ area_id: selectedArea.id, product_type: p.product_type, rate_per_kg: Number(ratesInput[p.product_type] || 0) })) || []; const { error } = await supabase.from("area_rates").upsert(updates, { onConflict: 'area_id, product_type' }); if(error) throw error; }, onSuccess: () => { toast.success(`Rates updated for ${selectedArea.area_name}`); setRateModalOpen(false); queryClient.invalidateQueries({ queryKey: ["area-rates"] }); }, onError: (e:any) => toast.error(e.message) });
 
-  // --- NEW YEAR LOGIC (FIXED: Sub Area Clone + Auto Backup) ---
+  // --- NEW YEAR LOGIC (ALL COLUMNS INCLUDED EXPORT) ---
   const startNewYear = useMutation({
     mutationFn: async () => {
         const dateStr = new Date().toISOString().split('T')[0];
         
-        // 1. BACKUP DATA (Excel)
+        // 1. BACKUP DATA (Excel) - Fetch everything
         const { data: allCust } = await supabase.from("customers").select("*, areas(area_name)");
-        const { data: allOrd } = await supabase.from("orders").select("*, customers(name), areas(area_name)");
-        const { data: allDrv } = await supabase.from("drivers").select("*");
+        const { data: allOrd } = await supabase.from("orders").select("*, customers(name, phone, areas(area_name)), drivers(name)");
+        const { data: allDrv } = await supabase.from("drivers").select("*, areas(area_name)");
 
-        const custSheet = XLSX.utils.json_to_sheet(allCust || []);
-        const ordSheet = XLSX.utils.json_to_sheet(allOrd || []);
-        const drvSheet = XLSX.utils.json_to_sheet(allDrv || []);
+        // FORMAT CUSTOMERS - Keeps all fields (...c) and adds area_name
+        const formattedCustomers = (allCust || []).map((c: any) => {
+            const row = { ...c, area_name: c.areas?.area_name || "" };
+            delete row.areas; // remove nested object for clean excel
+            return row;
+        });
+
+        // FORMAT ORDERS - Keeps all fields (...o) and adds customer/driver names
+        const formattedOrders = (allOrd || []).map((o: any) => {
+            const row = { 
+                ...o, 
+                customer_name: o.customers?.name || "",
+                customer_phone: o.customers?.phone || "",
+                customer_area_name: o.customers?.areas?.area_name || "",
+                driver_name: o.drivers?.name || ""
+            };
+            delete row.customers; // remove nested objects
+            delete row.drivers;
+            delete row.areas;
+            return row;
+        });
+
+        // FORMAT DRIVERS - Keeps all fields (...d) and adds area_name
+        const formattedDrivers = (allDrv || []).map((d: any) => {
+            const row = { ...d, area_name: d.areas?.area_name || "" };
+            delete row.areas; // remove nested object
+            return row;
+        });
+
+        const custSheet = XLSX.utils.json_to_sheet(formattedCustomers);
+        const ordSheet = XLSX.utils.json_to_sheet(formattedOrders);
+        const drvSheet = XLSX.utils.json_to_sheet(formattedDrivers);
         
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, custSheet, "Customers");
@@ -58,17 +87,14 @@ const SettingsPage = () => {
         XLSX.writeFile(wb, `Year_End_Backup_${dateStr}.xlsx`);
         toast.info("Backup downloaded successfully.");
 
-        // 2. FETCH CUSTOMERS & HISTORY FOR SUB-AREA
+        // 2. FETCH CUSTOMERS & HISTORY FOR SUB-AREA CLONING
         const { data: customers } = await supabase.from("customers").select("id, area_id");
         
-        // Fetch order history to find last used sub_area
         const { data: orderHistory } = await supabase.from("orders").select("customer_id, sub_area, created_at").order("created_at", { ascending: false });
         
-        // Create Map: CustomerID -> Last Known Sub Area
         const subAreaMap: Record<string, string> = {};
         if (orderHistory) {
             orderHistory.forEach((o: any) => {
-                // If we haven't found a sub-area for this customer yet, take this one
                 if (!subAreaMap[o.customer_id] && o.sub_area && o.sub_area !== "New Year Entry") {
                     subAreaMap[o.customer_id] = o.sub_area;
                 }
@@ -77,7 +103,7 @@ const SettingsPage = () => {
 
         if(!customers || customers.length === 0) throw new Error("No customers found.");
 
-        // 3. CREATE NULL ENTRIES
+        // 3. CREATE NULL ENTRIES (CLONE)
         const newYearOrders = customers.map(c => ({
             customer_id: c.id,
             product_type: "Null",
@@ -86,7 +112,7 @@ const SettingsPage = () => {
             total_amount: 0,
             amount_paid: 0,
             status: "pending",
-            sub_area: subAreaMap[c.id] || null, // Uses old sub-area or leaves blank
+            sub_area: subAreaMap[c.id] || null, 
             notes: "Year Start"
         }));
 
@@ -94,14 +120,15 @@ const SettingsPage = () => {
         if(insertError) throw insertError;
     },
     onSuccess: () => {
-        toast.success("New Year Started! Data reset & Backup saved.");
+        toast.success("New Year Started! Data cloned & Backup saved.");
+        queryClient.invalidateQueries();
     },
     onError: (e: any) => toast.error("Failed: " + e.message)
   });
 
   const handleNewYearClick = () => {
-      if(confirm("WARNING: Start New Year?\n1. Backup will auto-download.\n2. All customers reset to 'Null' product.")) {
-          if(confirm("FINAL CHECK: Are you sure? This creates a fresh start.")) {
+      if(confirm("WARNING: Start New Year?\n1. Backup will auto-download.\n2. A new 'Null' order entry will be created for every customer.")) {
+          if(confirm("FINAL CHECK: Are you sure? This creates a fresh start without deleting customers.")) {
               startNewYear.mutate();
           }
       }
@@ -121,12 +148,12 @@ const SettingsPage = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{globalProducts?.map(p => (<div key={p.id} className="flex justify-between items-center bg-muted p-3 rounded-lg"><span className="font-medium">{p.product_type}</span><Button variant="ghost" size="icon" onClick={() => { if(confirm(`Delete product "${p.product_type}"?`)) deleteProduct.mutate(p.product_type); }}><Trash2 className="w-4 h-4 text-destructive"/></Button></div>))}</div>
       </div>
 
-      <div className="bg-red-50 border border-red-200 rounded-xl p-6 mt-8">
-        <div className="flex items-center gap-2 mb-4 text-red-700"><AlertTriangle className="w-6 h-6" /><h2 className="text-lg font-bold">New Year Data Management</h2></div>
-        <p className="text-sm text-gray-600 mb-4">Clicking this will download a full Excel backup and create a "Null" entry for every customer with their <strong>Existing Sub-Area</strong>.</p>
-        <Button variant="destructive" className="w-full sm:w-auto gap-2" onClick={handleNewYearClick} disabled={startNewYear.isPending}>
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-6 mt-8">
+        <div className="flex items-center gap-2 mb-4 text-blue-700"><AlertTriangle className="w-6 h-6" /><h2 className="text-lg font-bold">New Year Data Management</h2></div>
+        <p className="text-sm text-gray-600 mb-4">Clicking this will download a full Excel backup and create a <strong>"Null" order entry</strong> for every customer so you can start fresh.</p>
+        <Button variant="default" className="w-full sm:w-auto gap-2 bg-blue-600 hover:bg-blue-700" onClick={handleNewYearClick} disabled={startNewYear.isPending}>
             {startNewYear.isPending ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-            {startNewYear.isPending ? "Processing..." : "Start New Year"}
+            {startNewYear.isPending ? "Processing..." : "Start New Year (Clone Data)"}
         </Button>
       </div>
 
