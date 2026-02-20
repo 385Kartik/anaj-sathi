@@ -9,20 +9,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Search, PlusCircle, Printer, Trash2, Edit, FileSpreadsheet, Truck, History, AlertTriangle } from "lucide-react";
+import { Search, PlusCircle, Printer, Trash2, Edit, FileSpreadsheet, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { useReactToPrint } from "react-to-print";
 import * as XLSX from "xlsx";
 
-// Product Translations
-const productTranslations: Record<string, string> = {
-  "Tukdi": "टुकड़ी", 
-  "Sasiya": "सासिया", 
-  "Tukdi D": "टुकड़ी डीलक्स", 
-  "Sasiya D": "सासिया डीलक्स", 
-  "Other": "अन्य",
-  "Null": "अन्य"
-};
+// Fixed Columns Configuration (Table ke liye sirf ye 4)
+const PRODUCT_COLS = ["Tukdi", "Sasiya", "Tukdi D", "Sasiya D"];
 
 const Orders = () => {
   const queryClient = useQueryClient();
@@ -37,7 +30,7 @@ const Orders = () => {
   const [deliveryFilter, setDeliveryFilter] = useState("all");
 
   // --- BULK PRINT STATE ---
-  const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
   const printRef = useRef<HTMLDivElement>(null);
 
   // --- QUERIES ---
@@ -55,186 +48,176 @@ const Orders = () => {
       let query = supabase
         .from("orders")
         .select("*, customers(name, phone, address, area_id, areas(area_name)), drivers(name, phone)")
-        // Bulk order me time same ho sakta hai isliye order_number se descending fetch karenge
         .order("order_number", { ascending: false }); 
       const { data } = await query;
       return data || [];
     },
   });
 
-  // --- DYNAMIC SERIAL NUMBER LOGIC (FIXED) ---
-  const orderNumberMap = useMemo(() => {
-    const map = new Map();
-    if (!orders) return map;
-    // Puraane orders ko strictly original 'order_number' ke ascending order mein sort karenge
-    // Isse chahe bulk entry ka time same ho, sequence 100% perfect rahega
-    const sortedForNumbering = [...orders].sort((a: any, b: any) => a.order_number - b.order_number);
-    sortedForNumbering.forEach((o: any, index: number) => {
-        map.set(o.id, index + 1); // Exact continuous numbers: 1, 2, 3, 4
+  // --- GROUPING LOGIC ---
+  const groupedOrders = useMemo(() => {
+    if (!orders) return [];
+
+    const groups: Record<string, any> = {};
+
+    orders.forEach((o: any) => {
+        // Unique Key: Customer + Date + SubArea
+        const dateKey = o.delivery_date || o.order_date; 
+        const key = `${o.customer_id}_${dateKey}_${o.sub_area || 'NOSUB'}`;
+
+        if (!groups[key]) {
+            groups[key] = {
+                key: key,
+                primaryId: o.id, 
+                ids: [], 
+                date: dateKey,
+                customer: o.customers,
+                sub_area: o.sub_area,
+                driver: o.drivers,
+                status: o.status,
+                // Initialize buckets for known products + 'Other'
+                products: {
+                    "Tukdi": { qty: 0, amount: 0 },
+                    "Sasiya": { qty: 0, amount: 0 },
+                    "Tukdi D": { qty: 0, amount: 0 },
+                    "Sasiya D": { qty: 0, amount: 0 },
+                    "Other": { qty: 0, amount: 0 } 
+                },
+                totalAmount: 0,
+                amountPaid: 0
+            };
+        }
+
+        const g = groups[key];
+        g.ids.push(o.id);
+        g.totalAmount += Number(o.total_amount || 0);
+        g.amountPaid += Number(o.amount_paid || 0);
+
+        // Map Product
+        let pType = o.product_type;
+        if (!PRODUCT_COLS.includes(pType)) {
+            pType = "Other"; // Samesa Other/Null yahan jayega
+        }
+
+        g.products[pType].qty += Number(o.quantity_kg || 0);
+        g.products[pType].amount += Number(o.total_amount || 0);
     });
-    return map;
+
+    return Object.values(groups).sort((a: any, b: any) => 
+        new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
   }, [orders]);
 
-  // --- UPDATE STATUS MUTATION ---
+
+  // --- MUTATIONS ---
   const updateStatus = useMutation({
-    mutationFn: async ({ id, status }: { id: string, status: string }) => {
-        const { error } = await supabase.from("orders").update({ status }).eq("id", id);
+    mutationFn: async ({ ids, status }: { ids: string[], status: string }) => {
+        const { error } = await supabase.from("orders").update({ status }).in("id", ids);
         if(error) throw error;
     },
     onSuccess: () => {
-        toast.success("Delivery status updated!");
+        toast.success("Status updated!");
         queryClient.invalidateQueries({ queryKey: ["orders"] });
     },
     onError: (e: any) => toast.error(e.message)
   });
 
-  // --- CLEAR OLD ORDERS MUTATION ---
-  const clearOldOrders = useMutation({
-    mutationFn: async () => {
-      const { error } = await supabase
-        .from("orders")
-        .delete()
-        .neq("product_type", "Null"); 
-
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      toast.success("Old orders cleared successfully! Only New Year entries remain.");
-      queryClient.invalidateQueries({ queryKey: ["orders"] });
-    },
-    onError: (e: any) => toast.error("Error: " + e.message)
-  });
-
-  // --- DELETE SINGLE ORDER ---
-  const deleteOrder = useMutation({
-    mutationFn: async (id: string) => {
-        const { error } = await supabase.from("orders").delete().eq("id", id);
+  const deleteGroup = useMutation({
+    mutationFn: async (ids: string[]) => {
+        const { error } = await supabase.from("orders").delete().in("id", ids);
         if(error) throw error;
     },
     onSuccess: () => {
-        toast.success("Order deleted");
+        toast.success("Orders deleted");
         queryClient.invalidateQueries({ queryKey: ["orders"] });
     }
   });
 
-  // --- FILTER LOGIC ---
-  const filtered = orders?.filter((o: any) => {
-    const matchesName = !searchName || o.customers?.name?.toLowerCase().includes(searchName.toLowerCase());
-    const matchesPhone = !searchPhone || o.customers?.phone?.includes(searchPhone);
-    const matchesArea = areaFilter === "all" || o.customers?.area_id === areaFilter;
-    
-    const subAreaDisplay = o.sub_area === "New Year Entry" ? "" : o.sub_area;
-    const matchesSubArea = !subAreaSearch || subAreaDisplay?.toLowerCase().includes(subAreaSearch.toLowerCase());
+  const clearOldOrders = useMutation({
+    mutationFn: async () => {
+      // 1. Delete REAL products
+      const { error: delErr } = await supabase.from("orders").delete().neq("product_type", "Null").neq("product_type", "Other");
+      if(delErr) throw delErr;
 
-    const pendingAmount = o.total_amount - o.amount_paid;
+      // 2. Remove Duplicate Nulls (Keep Latest)
+      const { data: remaining } = await supabase.from("orders").select("id, customer_id, created_at").order("created_at", { ascending: false });
+      if (remaining) {
+          const seen = new Set();
+          const toDelete: string[] = [];
+          for (const o of remaining) {
+              if (seen.has(o.customer_id)) toDelete.push(o.id);
+              else seen.add(o.customer_id);
+          }
+          if (toDelete.length > 0) await supabase.from("orders").delete().in("id", toDelete);
+      }
+    },
+    onSuccess: () => {
+      toast.success("Cleaned!");
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+    }
+  });
+
+  // --- FILTERS ---
+  const filteredGroups = groupedOrders.filter((g: any) => {
+    const matchesName = !searchName || g.customer?.name?.toLowerCase().includes(searchName.toLowerCase());
+    const matchesPhone = !searchPhone || g.customer?.phone?.includes(searchPhone);
+    const matchesArea = areaFilter === "all" || g.customer?.area_id === areaFilter;
+    const subAreaDisplay = g.sub_area === "New Year Entry" ? "" : g.sub_area;
+    const matchesSubArea = !subAreaSearch || subAreaDisplay?.toLowerCase().includes(subAreaSearch.toLowerCase());
+    const pendingAmount = g.totalAmount - g.amountPaid;
     const matchesPayment = 
         paymentFilter === "all" ? true :
         paymentFilter === "pending" ? pendingAmount > 0 :
         paymentFilter === "paid" ? pendingAmount <= 0 : true;
-
     const matchesDelivery = 
         deliveryFilter === "all" ? true :
-        o.status === deliveryFilter;
+        g.status === deliveryFilter;
 
     return matchesName && matchesPhone && matchesArea && matchesSubArea && matchesPayment && matchesDelivery;
   });
 
-  // --- SPLIT DATA LOGIC ---
-  const currentYear = new Date().getFullYear();
-  const currentOrders = filtered?.filter((o: any) => new Date(o.order_date).getFullYear() === currentYear) || [];
-  const pastOrders = filtered?.filter((o: any) => new Date(o.order_date).getFullYear() < currentYear) || [];
-
-  // --- ACTIONS ---
-  const toggleSelect = (id: string) => {
-    setSelectedOrders(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  const toggleSelect = (key: string) => {
+    setSelectedGroupIds(prev => prev.includes(key) ? prev.filter(x => x !== key) : [...prev, key]);
   };
   const toggleAll = () => {
-    if (selectedOrders.length === filtered?.length) setSelectedOrders([]);
-    else setSelectedOrders(filtered?.map((o:any) => o.id) || []);
+    if (selectedGroupIds.length === filteredGroups.length) setSelectedGroupIds([]);
+    else setSelectedGroupIds(filteredGroups.map((g:any) => g.key));
   };
 
-  const handlePrint = useReactToPrint({
-    contentRef: printRef,
-    onAfterPrint: () => setSelectedOrders([]) 
-  });
-
+  // --- EXPORT ---
   const exportToExcel = () => {
-    if (!filtered || filtered.length === 0) return toast.error("No data");
-    const dataToExport = filtered.map((order: any) => ({
-      "Order No": orderNumberMap.get(order.id) || order.order_number, // Export Dynamic ID
-      "Date": new Date(order.order_date).toLocaleDateString("en-IN"),
-      "Customer": order.customers?.name,
-      "Phone": order.customers?.phone,
-      "Address": order.customers?.address,
-      "Area": order.customers?.areas?.area_name,
-      "Sub Area": order.sub_area === "New Year Entry" ? "" : order.sub_area, 
-      "Product": order.product_type,
-      "Qty (KG)": order.quantity_kg,
-      "Total Amount": order.total_amount,
-      "Pending Payment": order.total_amount - order.amount_paid,
-      "Delivery Status": order.status,
-      "Driver Name": order.drivers?.name || "Not Assigned",
-      "Driver Phone": order.drivers?.phone || "-"
+    if (!filteredGroups.length) return toast.error("No data");
+    const data = filteredGroups.map((g: any) => ({
+      "Date": new Date(g.date).toLocaleDateString("en-IN"),
+      "Customer": g.customer?.name,
+      "Phone": g.customer?.phone,
+      "Area": g.customer?.areas?.area_name,
+      "Sub Area": g.sub_area,
+      "Tukdi": g.products["Tukdi"].qty > 0 ? `${g.products["Tukdi"].qty} (${g.products["Tukdi"].amount})` : "-",
+      "Sasiya": g.products["Sasiya"].qty > 0 ? `${g.products["Sasiya"].qty} (${g.products["Sasiya"].amount})` : "-",
+      "Tukdi D": g.products["Tukdi D"].qty > 0 ? `${g.products["Tukdi D"].qty} (${g.products["Tukdi D"].amount})` : "-",
+      "Sasiya D": g.products["Sasiya D"].qty > 0 ? `${g.products["Sasiya D"].qty} (${g.products["Sasiya D"].amount})` : "-",
+      "Total Amount": g.totalAmount,
+      "Pending": g.totalAmount - g.amountPaid,
+      "Status": g.status,
+      "Driver": g.driver?.name || "-"
     }));
-    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Orders");
-    XLSX.writeFile(workbook, `Orders_${new Date().toISOString().split('T')[0]}.xlsx`);
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Orders");
+    XLSX.writeFile(wb, "Orders.xlsx");
     toast.success("Excel downloaded");
   };
 
-  // --- RENDER ROW ---
-  const renderRow = (order: any, isOld: boolean = false) => {
-      const pending = order.total_amount - order.amount_paid;
-      const displaySubArea = order.sub_area === "New Year Entry" ? "" : order.sub_area;
-
-      return (
-        <TableRow key={order.id} className={`hover:bg-muted/30 ${isOld ? "opacity-75 bg-gray-50/50" : ""}`}>
-            <TableCell><Checkbox checked={selectedOrders.includes(order.id)} onCheckedChange={() => toggleSelect(order.id)} /></TableCell>
-            <TableCell className="font-mono text-xs font-bold text-gray-700">{orderNumberMap.get(order.id)}</TableCell>
-            <TableCell><div><p className="font-medium text-sm">{order.customers?.name}</p><p className="text-xs text-muted-foreground">{order.customers?.phone}</p></div></TableCell>
-            <TableCell><div className="text-sm">{order.customers?.areas?.area_name}</div>{displaySubArea && <div className="text-xs font-medium text-primary">{displaySubArea}</div>}</TableCell>
-            <TableCell>{order.product_type}</TableCell>
-            <TableCell className="text-right bg-blue-50/30 font-medium">{order.quantity_kg} Guni</TableCell>
-            <TableCell className="text-right font-medium">₹{order.total_amount}</TableCell>
-            <TableCell className={`text-right font-bold bg-red-50/30 ${pending > 0 ? "text-red-600" : "text-green-600"}`}>{pending > 0 ? `₹${pending}` : "Paid"}</TableCell>
-            <TableCell className="text-center">
-                <Select defaultValue={order.status} onValueChange={(val) => updateStatus.mutate({id: order.id, status: val})}>
-                    <SelectTrigger className={`h-7 text-xs w-[110px] border-0 ${order.status === 'delivered' ? 'bg-green-100 text-green-700 font-bold' : 'bg-yellow-100 text-yellow-700 font-bold'}`}><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectItem value="pending">Pending</SelectItem><SelectItem value="delivered">Delivered</SelectItem></SelectContent>
-                </Select>
-            </TableCell>
-            <TableCell>{order.drivers ? (<div className="flex items-center gap-1 text-xs"><Truck className="w-3 h-3 text-muted-foreground" /><span>{order.drivers.name}</span></div>) : <span className="text-xs text-muted-foreground">-</span>}</TableCell>
-            <TableCell className="flex justify-center gap-2">
-                <Button size="icon" variant="outline" className="h-8 w-8" onClick={() => navigate(`/orders/edit/${order.id}`)}><Edit className="w-3 h-3" /></Button>
-                <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => {if(confirm("Delete?")) deleteOrder.mutate(order.id)}}><Trash2 className="w-3 h-3" /></Button>
-            </TableCell>
-        </TableRow>
-      );
-  };
+  const handlePrint = useReactToPrint({ contentRef: printRef });
 
   return (
     <div>
       <PageHeader title="Orders" subtitle="Manage orders & printing">
         <div className="flex flex-wrap gap-2">
-            {selectedOrders.length > 0 && <Button onClick={() => handlePrint()} className="bg-purple-600 hover:bg-purple-700 text-white gap-2"><Printer className="w-4 h-4" /> Print Selected ({selectedOrders.length})</Button>}
-            
+            {selectedGroupIds.length > 0 && <Button onClick={() => handlePrint()} className="bg-purple-600 hover:bg-purple-700 text-white gap-2"><Printer className="w-4 h-4" /> Print Selected ({selectedGroupIds.length})</Button>}
             <Button variant="outline" onClick={exportToExcel} className="gap-2"><FileSpreadsheet className="w-4 h-4 text-green-600" /> Excel</Button>
-            
-            <Button 
-              variant="destructive" 
-              onClick={() => { 
-                if(confirm("Are you sure? This will delete ALL orders except the 'Null' entries created for the New Year.")) { 
-                  clearOldOrders.mutate(); 
-                } 
-              }}
-              disabled={clearOldOrders.isPending}
-              className="gap-2"
-            >
-              <AlertTriangle className="w-4 h-4" />
-              {clearOldOrders.isPending ? "Clearing..." : "Clear Old Orders"}
-            </Button>
-
+            <Button variant="destructive" onClick={() => { if(confirm("Clean old history?")) clearOldOrders.mutate(); }} className="gap-2"><AlertTriangle className="w-4 h-4" /> Cleanup</Button>
             <Link to="/orders/new"><Button className="bg-primary text-primary-foreground gap-2"><PlusCircle className="w-4 h-4" /> New Order</Button></Link>
         </div>
       </PageHeader>
@@ -244,11 +227,11 @@ const Orders = () => {
             <TabsList><TabsTrigger value="all">All Orders</TabsTrigger><TabsTrigger value="pending">Pending Delivery</TabsTrigger><TabsTrigger value="delivered">Delivered</TabsTrigger></TabsList>
         </Tabs>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 bg-card p-4 rounded-xl border shadow-sm">
-            <div className="relative"><Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" /><Input value={searchName} onChange={e => setSearchName(e.target.value)} placeholder="Search Name..." className="pl-8 h-9" /></div>
-            <div className="relative"><Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" /><Input value={searchPhone} onChange={e => setSearchPhone(e.target.value)} placeholder="Search Phone..." className="pl-8 h-9" /></div>
-            <Select value={areaFilter} onValueChange={setAreaFilter}><SelectTrigger className="h-9"><SelectValue placeholder="Filter Area" /></SelectTrigger><SelectContent><SelectItem value="all">All Areas</SelectItem>{areas?.map((a:any) => <SelectItem key={a.id} value={a.id}>{a.area_name}</SelectItem>)}</SelectContent></Select>
-            <Input value={subAreaSearch} onChange={e => setSubAreaSearch(e.target.value)} placeholder="Filter Sub Area..." className="h-9" />
-            <Select value={paymentFilter} onValueChange={setPaymentFilter}><SelectTrigger className="h-9"><SelectValue placeholder="Payment Status" /></SelectTrigger><SelectContent><SelectItem value="all">All Payments</SelectItem><SelectItem value="pending">Pending Payment</SelectItem><SelectItem value="paid">Paid / Clear</SelectItem></SelectContent></Select>
+            <Input value={searchName} onChange={e => setSearchName(e.target.value)} placeholder="Search Name..." className="h-9" />
+            <Input value={searchPhone} onChange={e => setSearchPhone(e.target.value)} placeholder="Phone..." className="h-9" />
+            <Select value={areaFilter} onValueChange={setAreaFilter}><SelectTrigger className="h-9"><SelectValue placeholder="Area" /></SelectTrigger><SelectContent><SelectItem value="all">Area</SelectItem>{areas?.map((a:any) => <SelectItem key={a.id} value={a.id}>{a.area_name}</SelectItem>)}</SelectContent></Select>
+            <Input value={subAreaSearch} onChange={e => setSubAreaSearch(e.target.value)} placeholder="Sub Area..." className="h-9" />
+            <Select value={paymentFilter} onValueChange={setPaymentFilter}><SelectTrigger className="h-9"><SelectValue placeholder="Payment" /></SelectTrigger><SelectContent><SelectItem value="all">Payment Type</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="paid">Paid</SelectItem></SelectContent></Select>
         </div>
       </div>
 
@@ -256,49 +239,106 @@ const Orders = () => {
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
-              <TableRow className="bg-muted/50">
-                <TableHead className="w-[30px]"><Checkbox checked={selectedOrders.length === filtered?.length && filtered?.length > 0} onCheckedChange={toggleAll}/></TableHead>
-                <TableHead>#</TableHead><TableHead>Customer</TableHead><TableHead>Location (Sub-Area)</TableHead><TableHead>Product</TableHead><TableHead className="text-right bg-blue-50/50">Qty</TableHead><TableHead className="text-right">Total</TableHead><TableHead className="text-right text-red-600 bg-red-50/50">Payment</TableHead><TableHead className="text-center">Delivery Status</TableHead><TableHead>Driver</TableHead><TableHead className="text-center">Actions</TableHead>
+              <TableRow className="bg-muted/50 text-xs">
+                <TableHead className="w-[30px]"><Checkbox checked={selectedGroupIds.length === filteredGroups.length && filteredGroups.length > 0} onCheckedChange={toggleAll}/></TableHead>
+                <TableHead>Customer</TableHead>
+                {/* Fixed 4 Columns Only */}
+                {PRODUCT_COLS.map(col => <TableHead key={col} className="text-center bg-blue-50/30 text-blue-800">{col}</TableHead>)}
+                
+                <TableHead className="text-right">Total</TableHead>
+                <TableHead className="text-right text-red-600">Payment</TableHead>
+                <TableHead className="text-center">Delivery Status</TableHead>
+                <TableHead className="text-center">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {currentOrders.map((order: any) => renderRow(order, false))}
-              {pastOrders.length > 0 && <TableRow className="bg-amber-100 hover:bg-amber-100 border-y-2 border-amber-300"><TableCell colSpan={11} className="text-center py-2 font-bold text-amber-800 flex justify-center items-center gap-2"><History className="w-4 h-4" /> PREVIOUS YEAR HISTORY ({new Date().getFullYear() - 1} & Older)</TableCell></TableRow>}
-              {pastOrders.map((order: any) => renderRow(order, true))}
-              {filtered?.length === 0 && <TableRow><TableCell colSpan={11} className="text-center py-8 text-muted-foreground">No orders found</TableCell></TableRow>}
+              {filteredGroups.map((group: any) => {
+                  const pending = group.totalAmount - group.amountPaid;
+                  const displaySubArea = group.sub_area === "New Year Entry" ? "" : group.sub_area;
+                  
+                  return (
+                    <TableRow key={group.key} className="hover:bg-muted/30">
+                        <TableCell><Checkbox checked={selectedGroupIds.includes(group.key)} onCheckedChange={() => toggleSelect(group.key)} /></TableCell>
+                        <TableCell>
+                            <div>
+                                <p className="font-medium text-sm">{group.customer?.name}</p>
+                                <p className="text-xs text-muted-foreground">{group.customer?.phone}</p>
+                                <p className="text-xs font-semibold text-primary">{group.customer?.areas?.area_name} {displaySubArea && `(${displaySubArea})`}</p>
+                            </div>
+                        </TableCell>
+                        
+                        {/* Only 4 Product Columns. Other/Null is hidden visually but included in Total */}
+                        {PRODUCT_COLS.map(colKey => {
+                            const pData = group.products[colKey];
+                            const hasData = pData && pData.qty > 0;
+                            return (
+                                <TableCell key={colKey} className={`text-center text-xs ${hasData ? 'font-medium' : 'text-muted-foreground/30'}`}>
+                                    {hasData ? (
+                                        <div className="flex flex-col">
+                                            <span>{pData.qty} Guni</span>
+                                            <span className="text-[10px] text-muted-foreground">₹{pData.amount}</span>
+                                        </div>
+                                    ) : "-"}
+                                </TableCell>
+                            )
+                        })}
+
+                        <TableCell className="text-right font-bold">₹{group.totalAmount}</TableCell>
+                        <TableCell className={`text-right font-bold text-xs ${pending > 0 ? "text-red-600" : "text-green-600"}`}>{pending > 0 ? `₹${pending}` : "Paid"}</TableCell>
+                        <TableCell className="text-center">
+                            <Select defaultValue={group.status} onValueChange={(val) => updateStatus.mutate({ ids: group.ids, status: val })}>
+                                <SelectTrigger className={`h-6 text-[10px] w-[90px] border-0 mx-auto ${group.status === 'delivered' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}><SelectValue /></SelectTrigger>
+                                <SelectContent><SelectItem value="pending">Pending</SelectItem><SelectItem value="delivered">Delivered</SelectItem></SelectContent>
+                            </Select>
+                        </TableCell>
+                        <TableCell className="text-center">
+                            <div className="flex justify-center gap-1">
+                                <Button size="icon" variant="outline" className="h-7 w-7" onClick={() => navigate(`/orders/edit/${group.primaryId}`)}><Edit className="w-3 h-3" /></Button>
+                                <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => { if(confirm("Delete entire order set?")) deleteGroup.mutate(group.ids); }}><Trash2 className="w-3 h-3" /></Button>
+                            </div>
+                        </TableCell>
+                    </TableRow>
+                  )
+              })}
+              {filteredGroups.length === 0 && <TableRow><TableCell colSpan={11} className="text-center py-8">No orders found</TableCell></TableRow>}
             </TableBody>
           </Table>
         </div>
       </div>
 
-      {/* --- PRINT SLIP SECTION (FIXED HEADER & FOOTER) --- */}
+      {/* --- PRINT SLIP (Includes EVERYTHING in list) --- */}
       <div style={{ display: "none" }}>
         <div ref={printRef}>
-            {filtered?.filter((o:any) => selectedOrders.includes(o.id)).map((order:any) => {
-                const slipSubArea = order.sub_area === "New Year Entry" ? "" : order.sub_area;
-                return (
-                <div key={order.id} style={{ width: "80mm", padding: "2mm", fontFamily: "'Noto Sans Devanagari', sans-serif", pageBreakAfter: "always", marginBottom: "5mm" }}>
+            {filteredGroups.filter((g:any) => selectedGroupIds.includes(g.key)).map((group:any) => (
+                <div key={group.key} style={{ width: "80mm", padding: "2mm", fontFamily: "'Noto Sans Devanagari', sans-serif", pageBreakAfter: "always", marginBottom: "5mm" }}>
                     <div style={{ border: "1px solid black", padding: "2mm", minHeight: "300px", position: "relative" }}>
                         <div style={{ textAlign: "center", borderBottom: "1px dashed black", paddingBottom: "2mm", marginBottom: "2mm" }}>
-                            <h3 style={{ fontSize: "16px", fontWeight: "bold", margin: "0", color: "black" }}>|| स्वामीनारायण विजयते ||</h3>
-                            <h2 style={{ fontSize: "22px", fontWeight: "bold", margin: "2px 0 0 0" }}>WHEATFLOW</h2>
+                            <h3 style={{ fontSize: "16px", fontWeight: "bold", margin: "0" }}>|| स्वामीनारायण विजयते ||</h3>
+                            <h2 style={{ fontSize: "22px", fontWeight: "bold", margin: "0" }}>WHEATFLOW</h2>
                         </div>
-                        <div style={{ fontSize: "12px", marginBottom: "2mm", borderBottom: "1px solid #eee", paddingBottom: "1mm" }}><div style={{ display: "flex", justifyContent: "space-between" }}><span><strong>No:</strong> {orderNumberMap.get(order.id)}</span><span><strong>Date:</strong> {new Date(order.order_date).toLocaleDateString("en-IN")}</span></div></div>
+                        <div style={{ fontSize: "12px", marginBottom: "2mm" }}><div style={{ display: "flex", justifyContent: "space-between" }}><span><strong>Date:</strong> {new Date(group.date).toLocaleDateString("en-IN")}</span></div></div>
                         <div style={{ fontSize: "12px", marginBottom: "3mm" }}>
-                            <p style={{ fontSize: "10px", color: "#666", margin: "0" }}>ग्राहक (Customer):</p>
-                            <p style={{ fontSize: "14px", fontWeight: "bold", margin: "2px 0", textTransform: "uppercase" }}>{order.customers?.name}</p>
-                            <p style={{ margin: "0" }}>{order.customers?.address}</p>
-                            <p style={{ margin: "0", fontWeight: "bold" }}>{order.customers?.areas?.area_name} {slipSubArea && <span>, {slipSubArea}</span>}</p>
-                            <p style={{ fontWeight: "bold", margin: "2px 0" }}>Mob: {order.customers?.phone}</p>
+                            <p style={{ fontWeight: "bold", fontSize: "14px", textTransform: "uppercase" }}>{group.customer?.name}</p>
+                            <p>{group.customer?.areas?.area_name} {group.sub_area && `, ${group.sub_area}`}</p>
+                            <p>Mob: {group.customer?.phone}</p>
                         </div>
                         <table style={{ width: "100%", fontSize: "12px", borderCollapse: "collapse", marginBottom: "3mm" }}>
-                            <thead><tr style={{ borderTop: "1px solid black", borderBottom: "1px solid black" }}><th style={{ textAlign: "left", padding: "1mm 0" }}>विवरण (Item)</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>Amt</th></tr></thead>
-                            <tbody><tr><td style={{ padding: "1.5mm 0" }}>{productTranslations[order.product_type] || order.product_type}</td><td style={{ textAlign: "right" }}>{order.quantity_kg} Guni</td><td style={{ textAlign: "right" }}>₹{order.total_amount}</td></tr></tbody>
+                            <thead><tr style={{ borderTop: "1px solid black", borderBottom: "1px solid black" }}><th style={{ textAlign: "left" }}>Item</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>Amt</th></tr></thead>
+                            <tbody>
+                                {/* Here we map ALL products including 'Other' so nothing is missed on bill */}
+                                {[...PRODUCT_COLS, "Other"].map(p => {
+                                    const item = group.products[p];
+                                    if(item.qty > 0) return (
+                                        <tr key={p}><td style={{ padding: "1mm 0" }}>{p === "Other" ? "Other Items" : p}</td><td style={{ textAlign: "right" }}>{item.qty}</td><td style={{ textAlign: "right" }}>{item.amount}</td></tr>
+                                    )
+                                    return null;
+                                })}
+                            </tbody>
                         </table>
-                        <div style={{ fontSize: "16px", borderTop: "1px dashed black", paddingTop: "2mm", textAlign: "right" }}><div style={{ display: "flex", justifyContent: "space-between", fontWeight: "bold" }}><span>कुल (Total):</span><span>₹{order.total_amount}</span></div></div>
+                        <div style={{ fontSize: "16px", borderTop: "1px dashed black", paddingTop: "2mm", textAlign: "right", fontWeight: "bold" }}>Total: ₹{group.totalAmount}</div>
                         
                         <div style={{ marginTop: "15mm", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
-                            <div style={{ fontSize: "10px", maxWidth: "50%" }}>{order.drivers ? (<><div>Delivery By:</div><div style={{ fontWeight: "bold" }}>{order.drivers.name}</div><div>{order.drivers.phone}</div></>) : (<div>Self Pickup</div>)}</div>
+                            <div style={{ fontSize: "10px", maxWidth: "50%" }}>{group.driver ? (<><div>Delivery By:</div><div style={{ fontWeight: "bold" }}>{group.driver.name}</div><div>{group.driver.phone}</div></>) : (<div>Self Pickup</div>)}</div>
                             <div style={{ textAlign: "center" }}>
                                 <div style={{ borderBottom: "1px solid black", width: "35mm", marginBottom: "2mm" }}></div>
                                 <div style={{ fontSize: "10px", fontWeight: "bold" }}>Customer Sign</div>
@@ -306,7 +346,7 @@ const Orders = () => {
                         </div>
                     </div>
                 </div>
-            )})}
+            ))}
         </div>
       </div>
     </div>

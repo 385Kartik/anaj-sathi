@@ -34,7 +34,58 @@ const SettingsPage = () => {
   const deleteArea = useMutation({ mutationFn: async (id: string) => { const { count } = await supabase.from("customers").select("*", { count: 'exact', head: true }).eq("area_id", id); if (count && count > 0) throw new Error("Cannot delete: Customers exist in this area."); const { error } = await supabase.from("areas").delete().eq("id", id); if (error) throw error; }, onSuccess: () => { toast.success("Area deleted"); queryClient.invalidateQueries({ queryKey: ["areas"] }); }, onError: (e: any) => toast.error(e.message) });
   const addProduct = useMutation({ mutationFn: async () => { const name = newProductName.trim(); if(!name) throw new Error("Name required"); await supabase.from("stock").insert({ product_type: name, quantity_kg: 0 }); await supabase.from("product_rates").insert({ product_type: name, rate_per_kg: 0 }); }, onSuccess: () => { toast.success("Variety Added!"); queryClient.invalidateQueries(); setNewProductName(""); setProductModalOpen(false); }, });
   const deleteProduct = useMutation({ mutationFn: async (productType: string) => { const { count } = await supabase.from("orders").select("*", { count: 'exact', head: true }).eq("product_type", productType); if (count && count > 0) throw new Error("Orders exist for this product. Cannot delete."); await supabase.from("stock").delete().eq("product_type", productType); await supabase.from("product_rates").delete().eq("product_type", productType); }, onSuccess: () => { toast.success("Product deleted"); queryClient.invalidateQueries(); }, onError: (e: any) => toast.error(e.message) });
-  const saveAreaRates = useMutation({ mutationFn: async () => { const updates = globalProducts?.map(p => ({ area_id: selectedArea.id, product_type: p.product_type, rate_per_kg: Number(ratesInput[p.product_type] || 0) })) || []; const { error } = await supabase.from("area_rates").upsert(updates, { onConflict: 'area_id, product_type' }); if(error) throw error; }, onSuccess: () => { toast.success(`Rates updated for ${selectedArea.area_name}`); setRateModalOpen(false); queryClient.invalidateQueries({ queryKey: ["area-rates"] }); }, onError: (e:any) => toast.error(e.message) });
+  
+  // --- SMART RATE SYNC LOGIC ADDED HERE ---
+  const saveAreaRates = useMutation({ 
+    mutationFn: async () => { 
+        // 1. Update area_rates table
+        const updates = globalProducts?.map(p => ({ 
+            area_id: selectedArea.id, 
+            product_type: p.product_type, 
+            rate_per_kg: Number(ratesInput[p.product_type] || 0) 
+        })) || []; 
+        
+        const { error } = await supabase.from("area_rates").upsert(updates, { onConflict: 'area_id, product_type' }); 
+        if(error) throw error; 
+
+        // 2. Fetch all customers belonging to this updated area
+        const { data: custs } = await supabase.from("customers").select("id").eq("area_id", selectedArea.id);
+        
+        if (custs && custs.length > 0) {
+            const custIds = custs.map(c => c.id);
+            
+            // 3. Fetch all orders for these customers
+            const { data: ords } = await supabase.from("orders").select("id, product_type, quantity_kg").in("customer_id", custIds);
+            
+            if (ords && ords.length > 0) {
+                // 4. Update the rate_per_kg and total_amount for all these orders
+                const updatePromises = ords.map(o => {
+                    const newRateStr = ratesInput[o.product_type];
+                    if (newRateStr !== undefined && newRateStr !== "") {
+                        const newRate = Number(newRateStr);
+                        const newTotal = Number(o.quantity_kg) * newRate;
+                        
+                        return supabase.from("orders").update({
+                            rate_per_kg: newRate,
+                            total_amount: newTotal
+                        }).eq("id", o.id);
+                    }
+                    return null;
+                }).filter(Boolean); // Filter out any null promises
+
+                // Execute all order updates in parallel
+                await Promise.all(updatePromises);
+            }
+        }
+    }, 
+    onSuccess: () => { 
+        toast.success(`Rates updated & Synced with existing Orders for ${selectedArea.area_name}!`); 
+        setRateModalOpen(false); 
+        // Invalidate EVERYTHING so the Orders page auto-refreshes with new prices
+        queryClient.invalidateQueries(); 
+    }, 
+    onError: (e:any) => toast.error(e.message) 
+  });
 
   // --- NEW YEAR LOGIC (ALL COLUMNS INCLUDED EXPORT) ---
   const startNewYear = useMutation({
@@ -46,14 +97,14 @@ const SettingsPage = () => {
         const { data: allOrd } = await supabase.from("orders").select("*, customers(name, phone, areas(area_name)), drivers(name)");
         const { data: allDrv } = await supabase.from("drivers").select("*, areas(area_name)");
 
-        // FORMAT CUSTOMERS - Keeps all fields (...c) and adds area_name
+        // FORMAT CUSTOMERS
         const formattedCustomers = (allCust || []).map((c: any) => {
             const row = { ...c, area_name: c.areas?.area_name || "" };
-            delete row.areas; // remove nested object for clean excel
+            delete row.areas; 
             return row;
         });
 
-        // FORMAT ORDERS - Keeps all fields (...o) and adds customer/driver names
+        // FORMAT ORDERS 
         const formattedOrders = (allOrd || []).map((o: any) => {
             const row = { 
                 ...o, 
@@ -62,16 +113,16 @@ const SettingsPage = () => {
                 customer_area_name: o.customers?.areas?.area_name || "",
                 driver_name: o.drivers?.name || ""
             };
-            delete row.customers; // remove nested objects
+            delete row.customers; 
             delete row.drivers;
             delete row.areas;
             return row;
         });
 
-        // FORMAT DRIVERS - Keeps all fields (...d) and adds area_name
+        // FORMAT DRIVERS 
         const formattedDrivers = (allDrv || []).map((d: any) => {
             const row = { ...d, area_name: d.areas?.area_name || "" };
-            delete row.areas; // remove nested object
+            delete row.areas; 
             return row;
         });
 
