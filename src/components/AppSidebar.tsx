@@ -9,6 +9,7 @@ import {
   BarChart3,
   Settings,
   Wheat,
+  Wallet
 } from "lucide-react";
 
 const navItems = [
@@ -20,6 +21,7 @@ const navItems = [
   { to: "/drivers", icon: Truck, label: "Drivers" },
   { to: "/reports", icon: BarChart3, label: "Reports" },
   { to: "/settings", icon: Settings, label: "Settings" },
+  { to: "/expenses", icon: Wallet, label: "Expenses" },
 ];
 
 const AppSidebar = () => {
