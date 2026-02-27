@@ -35,76 +35,59 @@ const SettingsPage = () => {
   const addProduct = useMutation({ mutationFn: async () => { const name = newProductName.trim(); if(!name) throw new Error("Name required"); await supabase.from("stock").insert({ product_type: name, quantity_kg: 0 }); await supabase.from("product_rates").insert({ product_type: name, rate_per_kg: 0 }); }, onSuccess: () => { toast.success("Variety Added!"); queryClient.invalidateQueries(); setNewProductName(""); setProductModalOpen(false); }, });
   const deleteProduct = useMutation({ mutationFn: async (productType: string) => { const { count } = await supabase.from("orders").select("*", { count: 'exact', head: true }).eq("product_type", productType); if (count && count > 0) throw new Error("Orders exist for this product. Cannot delete."); await supabase.from("stock").delete().eq("product_type", productType); await supabase.from("product_rates").delete().eq("product_type", productType); }, onSuccess: () => { toast.success("Product deleted"); queryClient.invalidateQueries(); }, onError: (e: any) => toast.error(e.message) });
   
-  // --- SMART RATE SYNC LOGIC ADDED HERE ---
   const saveAreaRates = useMutation({ 
     mutationFn: async () => { 
-        // 1. Update area_rates table
         const updates = globalProducts?.map(p => ({ 
             area_id: selectedArea.id, 
             product_type: p.product_type, 
             rate_per_kg: Number(ratesInput[p.product_type] || 0) 
         })) || []; 
-        
         const { error } = await supabase.from("area_rates").upsert(updates, { onConflict: 'area_id, product_type' }); 
         if(error) throw error; 
 
-        // 2. Fetch all customers belonging to this updated area
         const { data: custs } = await supabase.from("customers").select("id").eq("area_id", selectedArea.id);
-        
         if (custs && custs.length > 0) {
             const custIds = custs.map(c => c.id);
-            
-            // 3. Fetch all orders for these customers
             const { data: ords } = await supabase.from("orders").select("id, product_type, quantity_kg").in("customer_id", custIds);
-            
             if (ords && ords.length > 0) {
-                // 4. Update the rate_per_kg and total_amount for all these orders
                 const updatePromises = ords.map(o => {
                     const newRateStr = ratesInput[o.product_type];
                     if (newRateStr !== undefined && newRateStr !== "") {
                         const newRate = Number(newRateStr);
                         const newTotal = Number(o.quantity_kg) * newRate;
-                        
-                        return supabase.from("orders").update({
-                            rate_per_kg: newRate,
-                            total_amount: newTotal
-                        }).eq("id", o.id);
+                        return supabase.from("orders").update({ rate_per_kg: newRate, total_amount: newTotal }).eq("id", o.id);
                     }
                     return null;
-                }).filter(Boolean); // Filter out any null promises
-
-                // Execute all order updates in parallel
+                }).filter(Boolean);
                 await Promise.all(updatePromises);
             }
         }
     }, 
     onSuccess: () => { 
-        toast.success(`Rates updated & Synced with existing Orders for ${selectedArea.area_name}!`); 
+        toast.success(`Rates updated & Synced!`); 
         setRateModalOpen(false); 
-        // Invalidate EVERYTHING so the Orders page auto-refreshes with new prices
         queryClient.invalidateQueries(); 
     }, 
     onError: (e:any) => toast.error(e.message) 
   });
 
-  // --- NEW YEAR LOGIC (ALL COLUMNS INCLUDED EXPORT) ---
+  // --- NEW YEAR LOGIC (100% WIPE OUT) ---
   const startNewYear = useMutation({
     mutationFn: async () => {
         const dateStr = new Date().toISOString().split('T')[0];
         
-        // 1. BACKUP DATA (Excel) - Fetch everything
+        // 1. BACKUP DATA (Excel) - Fetch everything before deletion
         const { data: allCust } = await supabase.from("customers").select("*, areas(area_name)");
         const { data: allOrd } = await supabase.from("orders").select("*, customers(name, phone, areas(area_name)), drivers(name)");
         const { data: allDrv } = await supabase.from("drivers").select("*, areas(area_name)");
+        const { data: allExp } = await supabase.from("expenses" as any).select("*").order("created_at");
 
-        // FORMAT CUSTOMERS
         const formattedCustomers = (allCust || []).map((c: any) => {
             const row = { ...c, area_name: c.areas?.area_name || "" };
             delete row.areas; 
             return row;
         });
 
-        // FORMAT ORDERS 
         const formattedOrders = (allOrd || []).map((o: any) => {
             const row = { 
                 ...o, 
@@ -113,39 +96,42 @@ const SettingsPage = () => {
                 customer_area_name: o.customers?.areas?.area_name || "",
                 driver_name: o.drivers?.name || ""
             };
-            delete row.customers; 
-            delete row.drivers;
-            delete row.areas;
+            delete row.customers; delete row.drivers; delete row.areas;
             return row;
         });
 
-        // FORMAT DRIVERS 
         const formattedDrivers = (allDrv || []).map((d: any) => {
             const row = { ...d, area_name: d.areas?.area_name || "" };
             delete row.areas; 
             return row;
         });
 
+        const formattedExpenses = (allExp || []).map((e: any) => ({
+            "Date": new Date(e.created_at).toLocaleDateString('en-IN'),
+            "Reason": e.reason,
+            "Amount": e.amount
+        }));
+
         const custSheet = XLSX.utils.json_to_sheet(formattedCustomers);
         const ordSheet = XLSX.utils.json_to_sheet(formattedOrders);
         const drvSheet = XLSX.utils.json_to_sheet(formattedDrivers);
+        const expSheet = XLSX.utils.json_to_sheet(formattedExpenses);
         
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, custSheet, "Customers");
         XLSX.utils.book_append_sheet(wb, ordSheet, "Orders");
         XLSX.utils.book_append_sheet(wb, drvSheet, "Drivers");
+        XLSX.utils.book_append_sheet(wb, expSheet, "Expenses"); 
         
         XLSX.writeFile(wb, `Year_End_Backup_${dateStr}.xlsx`);
         toast.info("Backup downloaded successfully.");
 
-        // 2. FETCH CUSTOMERS & HISTORY FOR SUB-AREA CLONING
+        // 2. FETCH CUSTOMERS TO CLONE LATER
         const { data: customers } = await supabase.from("customers").select("id, area_id");
-        
-        const { data: orderHistory } = await supabase.from("orders").select("customer_id, sub_area, created_at").order("created_at", { ascending: false });
-        
         const subAreaMap: Record<string, string> = {};
-        if (orderHistory) {
-            orderHistory.forEach((o: any) => {
+        if (allOrd) {
+            const sortedOrds = [...allOrd].sort((a:any, b:any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+            sortedOrds.forEach((o: any) => {
                 if (!subAreaMap[o.customer_id] && o.sub_area && o.sub_area !== "New Year Entry") {
                     subAreaMap[o.customer_id] = o.sub_area;
                 }
@@ -154,7 +140,15 @@ const SettingsPage = () => {
 
         if(!customers || customers.length === 0) throw new Error("No customers found.");
 
-        // 3. CREATE NULL ENTRIES (CLONE)
+        // 3. WIPE ALL OLD ORDERS (Delete Everything)
+        const { error: wipeOrdersError } = await supabase.from("orders").delete().not("id", "is", null);
+        if (wipeOrdersError) throw wipeOrdersError;
+
+        // 4. WIPE ALL EXPENSES (Delete Everything)
+        const { error: deleteAllExpError } = await supabase.from("expenses" as any).delete().not('id', 'is', null);
+        if(deleteAllExpError) throw deleteAllExpError;
+
+        // 5. CREATE FRESH NULL ENTRIES FOR NEW YEAR
         const newYearOrders = customers.map(c => ({
             customer_id: c.id,
             product_type: "Null",
@@ -169,17 +163,18 @@ const SettingsPage = () => {
 
         const { error: insertError } = await supabase.from("orders").insert(newYearOrders);
         if(insertError) throw insertError;
+
     },
     onSuccess: () => {
-        toast.success("New Year Started! Data cloned & Backup saved.");
+        toast.success("New Year Started! Data Wiped completely, Income & Expenses Reset to 0.");
         queryClient.invalidateQueries();
     },
     onError: (e: any) => toast.error("Failed: " + e.message)
   });
 
   const handleNewYearClick = () => {
-      if(confirm("WARNING: Start New Year?\n1. Backup will auto-download.\n2. A new 'Null' order entry will be created for every customer.")) {
-          if(confirm("FINAL CHECK: Are you sure? This creates a fresh start without deleting customers.")) {
+      if(confirm("WARNING: Start New Year?\n1. A complete Backup will auto-download.\n2. ALL ORDERS AND EXPENSES WILL BE WIPED (Reports will reset to 0).\n3. Customers cloned with a fresh 'Null' order.")) {
+          if(confirm("FINAL CHECK: Are you 100% sure? Reports and Expenses will be completely cleared.")) {
               startNewYear.mutate();
           }
       }
@@ -201,10 +196,10 @@ const SettingsPage = () => {
 
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-6 mt-8">
         <div className="flex items-center gap-2 mb-4 text-blue-700"><AlertTriangle className="w-6 h-6" /><h2 className="text-lg font-bold">New Year Data Management</h2></div>
-        <p className="text-sm text-gray-600 mb-4">Clicking this will download a full Excel backup and create a <strong>"Null" order entry</strong> for every customer so you can start fresh.</p>
-        <Button variant="default" className="w-full sm:w-auto gap-2 bg-blue-600 hover:bg-blue-700" onClick={handleNewYearClick} disabled={startNewYear.isPending}>
+        <p className="text-sm text-gray-600 mb-4">Clicking this will download a full backup, create a <strong>"Null" order entry</strong> for customers, and <strong>WIPE ALL Orders and Expenses</strong> from the database to start totally fresh.</p>
+        <Button variant="destructive" className="w-full sm:w-auto gap-2 hover:bg-red-700" onClick={handleNewYearClick} disabled={startNewYear.isPending}>
             {startNewYear.isPending ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-            {startNewYear.isPending ? "Processing..." : "Start New Year (Clone Data)"}
+            {startNewYear.isPending ? "Processing..." : "Start New Year (Full Wipe & Reset)"}
         </Button>
       </div>
 

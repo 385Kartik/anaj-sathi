@@ -9,13 +9,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Search, PlusCircle, Printer, Trash2, Edit, FileSpreadsheet, AlertTriangle } from "lucide-react";
+import { Search, PlusCircle, Printer, Trash2, Edit, FileSpreadsheet, Truck, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { useReactToPrint } from "react-to-print";
 import * as XLSX from "xlsx";
 
-// Fixed Columns Configuration (Table ke liye sirf ye 4)
+// Fixed Columns Configuration
 const PRODUCT_COLS = ["Tukdi", "Sasiya", "Tukdi D", "Sasiya D"];
+
+// Product Translations for Hindi Print
+const productTranslations: Record<string, string> = {
+  "Tukdi": "टुकड़ी", 
+  "Sasiya": "सासिया", 
+  "Tukdi D": "टुकड़ी डिवेल", 
+  "Sasiya D": "सासिया डिवेल", 
+  "Other": "अन्य",
+  "Null": "अन्य"
+};
 
 const Orders = () => {
   const queryClient = useQueryClient();
@@ -47,6 +57,7 @@ const Orders = () => {
     queryFn: async () => {
       let query = supabase
         .from("orders")
+        // Fetching address as requested
         .select("*, customers(name, phone, address, area_id, areas(area_name)), drivers(name, phone)")
         .order("order_number", { ascending: false }); 
       const { data } = await query;
@@ -61,7 +72,7 @@ const Orders = () => {
     const groups: Record<string, any> = {};
 
     orders.forEach((o: any) => {
-        // Unique Key: Customer + Date + SubArea
+        // Unique Key
         const dateKey = o.delivery_date || o.order_date; 
         const key = `${o.customer_id}_${dateKey}_${o.sub_area || 'NOSUB'}`;
 
@@ -75,7 +86,6 @@ const Orders = () => {
                 sub_area: o.sub_area,
                 driver: o.drivers,
                 status: o.status,
-                // Initialize buckets for known products + 'Other'
                 products: {
                     "Tukdi": { qty: 0, amount: 0 },
                     "Sasiya": { qty: 0, amount: 0 },
@@ -93,10 +103,9 @@ const Orders = () => {
         g.totalAmount += Number(o.total_amount || 0);
         g.amountPaid += Number(o.amount_paid || 0);
 
-        // Map Product
         let pType = o.product_type;
         if (!PRODUCT_COLS.includes(pType)) {
-            pType = "Other"; // Samesa Other/Null yahan jayega
+            pType = "Other";
         }
 
         g.products[pType].qty += Number(o.quantity_kg || 0);
@@ -135,11 +144,9 @@ const Orders = () => {
 
   const clearOldOrders = useMutation({
     mutationFn: async () => {
-      // 1. Delete REAL products
       const { error: delErr } = await supabase.from("orders").delete().neq("product_type", "Null").neq("product_type", "Other");
       if(delErr) throw delErr;
 
-      // 2. Remove Duplicate Nulls (Keep Latest)
       const { data: remaining } = await supabase.from("orders").select("id, customer_id, created_at").order("created_at", { ascending: false });
       if (remaining) {
           const seen = new Set();
@@ -229,9 +236,9 @@ const Orders = () => {
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 bg-card p-4 rounded-xl border shadow-sm">
             <Input value={searchName} onChange={e => setSearchName(e.target.value)} placeholder="Search Name..." className="h-9" />
             <Input value={searchPhone} onChange={e => setSearchPhone(e.target.value)} placeholder="Phone..." className="h-9" />
-            <Select value={areaFilter} onValueChange={setAreaFilter}><SelectTrigger className="h-9"><SelectValue placeholder="Area" /></SelectTrigger><SelectContent><SelectItem value="all">Area</SelectItem>{areas?.map((a:any) => <SelectItem key={a.id} value={a.id}>{a.area_name}</SelectItem>)}</SelectContent></Select>
+            <Select value={areaFilter} onValueChange={setAreaFilter}><SelectTrigger className="h-9"><SelectValue placeholder="Area" /></SelectTrigger><SelectContent><SelectItem value="all">All</SelectItem>{areas?.map((a:any) => <SelectItem key={a.id} value={a.id}>{a.area_name}</SelectItem>)}</SelectContent></Select>
             <Input value={subAreaSearch} onChange={e => setSubAreaSearch(e.target.value)} placeholder="Sub Area..." className="h-9" />
-            <Select value={paymentFilter} onValueChange={setPaymentFilter}><SelectTrigger className="h-9"><SelectValue placeholder="Payment" /></SelectTrigger><SelectContent><SelectItem value="all">Payment Type</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="paid">Paid</SelectItem></SelectContent></Select>
+            <Select value={paymentFilter} onValueChange={setPaymentFilter}><SelectTrigger className="h-9"><SelectValue placeholder="Payment" /></SelectTrigger><SelectContent><SelectItem value="all">All</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="paid">Paid</SelectItem></SelectContent></Select>
         </div>
       </div>
 
@@ -242,9 +249,7 @@ const Orders = () => {
               <TableRow className="bg-muted/50 text-xs">
                 <TableHead className="w-[30px]"><Checkbox checked={selectedGroupIds.length === filteredGroups.length && filteredGroups.length > 0} onCheckedChange={toggleAll}/></TableHead>
                 <TableHead>Customer</TableHead>
-                {/* Fixed 4 Columns Only */}
                 {PRODUCT_COLS.map(col => <TableHead key={col} className="text-center bg-blue-50/30 text-blue-800">{col}</TableHead>)}
-                
                 <TableHead className="text-right">Total</TableHead>
                 <TableHead className="text-right text-red-600">Payment</TableHead>
                 <TableHead className="text-center">Delivery Status</TableHead>
@@ -267,7 +272,6 @@ const Orders = () => {
                             </div>
                         </TableCell>
                         
-                        {/* Only 4 Product Columns. Other/Null is hidden visually but included in Total */}
                         {PRODUCT_COLS.map(colKey => {
                             const pData = group.products[colKey];
                             const hasData = pData && pData.qty > 0;
@@ -300,48 +304,83 @@ const Orders = () => {
                     </TableRow>
                   )
               })}
-              {filteredGroups.length === 0 && <TableRow><TableCell colSpan={11} className="text-center py-8">No orders found</TableCell></TableRow>}
+              {filteredGroups.length === 0 && <TableRow><TableCell colSpan={10} className="text-center py-8">No orders found</TableCell></TableRow>}
             </TableBody>
           </Table>
         </div>
       </div>
 
-      {/* --- PRINT SLIP (Includes EVERYTHING in list) --- */}
+      {/* --- PRINT SLIP (Hindi Translation + Full Address) --- */}
       <div style={{ display: "none" }}>
         <div ref={printRef}>
             {filteredGroups.filter((g:any) => selectedGroupIds.includes(g.key)).map((group:any) => (
                 <div key={group.key} style={{ width: "80mm", padding: "2mm", fontFamily: "'Noto Sans Devanagari', sans-serif", pageBreakAfter: "always", marginBottom: "5mm" }}>
                     <div style={{ border: "1px solid black", padding: "2mm", minHeight: "300px", position: "relative" }}>
                         <div style={{ textAlign: "center", borderBottom: "1px dashed black", paddingBottom: "2mm", marginBottom: "2mm" }}>
-                            <h3 style={{ fontSize: "16px", fontWeight: "bold", margin: "0" }}>|| स्वामीनारायण विजयते ||</h3>
+                            <h3 style={{ fontSize: "16px", fontWeight: "bold", margin: "0", color: "black" }}>|| स्वामीनारायण विजयते ||</h3>
                             <h2 style={{ fontSize: "22px", fontWeight: "bold", margin: "0" }}>WHEATFLOW</h2>
                         </div>
-                        <div style={{ fontSize: "12px", marginBottom: "2mm" }}><div style={{ display: "flex", justifyContent: "space-between" }}><span><strong>Date:</strong> {new Date(group.date).toLocaleDateString("en-IN")}</span></div></div>
+                        <div style={{ fontSize: "12px", marginBottom: "2mm", borderBottom: "1px solid #eee", paddingBottom: "1mm" }}><div style={{ display: "flex", justifyContent: "space-between" }}><span><strong>Date:</strong> {new Date(group.date).toLocaleDateString("en-IN")}</span></div></div>
+                        
+                        {/* CUSTOMER DETAILS WITH FULL ADDRESS IN HINDI */}
                         <div style={{ fontSize: "12px", marginBottom: "3mm" }}>
-                            <p style={{ fontWeight: "bold", fontSize: "14px", textTransform: "uppercase" }}>{group.customer?.name}</p>
-                            <p>{group.customer?.areas?.area_name} {group.sub_area && `, ${group.sub_area}`}</p>
-                            <p>Mob: {group.customer?.phone}</p>
+                            <p style={{ fontSize: "10px", color: "#666", margin: "0" }}>ग्राहक (Customer):</p>
+                            <p style={{ fontWeight: "bold", fontSize: "14px", textTransform: "uppercase", margin: "2px 0" }}>{group.customer?.name}</p>
+                            {/* Full Address Added Here */}
+                            <p style={{ margin: "0" }}>{group.customer?.address}</p>
+                            <p style={{ margin: "0", fontWeight: "bold" }}>{group.customer?.areas?.area_name} {group.sub_area && `, ${group.sub_area}`}</p>
+                            <p style={{ fontWeight: "bold", margin: "2px 0" }}>Mob: {group.customer?.phone}</p>
                         </div>
+
+                        {/* PRODUCT TABLE IN HINDI */}
                         <table style={{ width: "100%", fontSize: "12px", borderCollapse: "collapse", marginBottom: "3mm" }}>
-                            <thead><tr style={{ borderTop: "1px solid black", borderBottom: "1px solid black" }}><th style={{ textAlign: "left" }}>Item</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>Amt</th></tr></thead>
+                            <thead>
+                                <tr style={{ borderTop: "1px solid black", borderBottom: "1px solid black" }}>
+                                    <th style={{ textAlign: "left", padding: "1mm 0" }}>विवरण (Item)</th>
+                                    <th style={{ textAlign: "right" }}>मात्रा (Qty)</th>
+                                    <th style={{ textAlign: "right" }}>रकम (Amt)</th>
+                                </tr>
+                            </thead>
                             <tbody>
-                                {/* Here we map ALL products including 'Other' so nothing is missed on bill */}
                                 {[...PRODUCT_COLS, "Other"].map(p => {
                                     const item = group.products[p];
                                     if(item.qty > 0) return (
-                                        <tr key={p}><td style={{ padding: "1mm 0" }}>{p === "Other" ? "Other Items" : p}</td><td style={{ textAlign: "right" }}>{item.qty}</td><td style={{ textAlign: "right" }}>{item.amount}</td></tr>
+                                        <tr key={p}>
+                                            {/* Translate Product Name */}
+                                            <td style={{ padding: "1.5mm 0" }}>{productTranslations[p] || p}</td>
+                                            <td style={{ textAlign: "right" }}>{item.qty} गुनी</td>
+                                            <td style={{ textAlign: "right" }}>₹{item.amount}</td>
+                                        </tr>
                                     )
                                     return null;
                                 })}
                             </tbody>
                         </table>
-                        <div style={{ fontSize: "16px", borderTop: "1px dashed black", paddingTop: "2mm", textAlign: "right", fontWeight: "bold" }}>Total: ₹{group.totalAmount}</div>
                         
+                        {/* TOTAL */}
+                        <div style={{ fontSize: "16px", borderTop: "1px dashed black", paddingTop: "2mm", textAlign: "right", fontWeight: "bold" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                <span>कुल (Total):</span>
+                                <span>₹{group.totalAmount}</span>
+                            </div>
+                        </div>
+                        
+                        {/* FOOTER */}
                         <div style={{ marginTop: "15mm", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
-                            <div style={{ fontSize: "10px", maxWidth: "50%" }}>{group.driver ? (<><div>Delivery By:</div><div style={{ fontWeight: "bold" }}>{group.driver.name}</div><div>{group.driver.phone}</div></>) : (<div>Self Pickup</div>)}</div>
+                            <div style={{ fontSize: "10px", maxWidth: "50%" }}>
+                                {group.driver ? (
+                                    <>
+                                        <div>डिलिवरी (Delivery By):</div>
+                                        <div style={{ fontWeight: "bold" }}>{group.driver.name}</div>
+                                        <div>{group.driver.phone}</div>
+                                    </>
+                                ) : (
+                                    <div>स्वयं पिकअप (Self Pickup)</div>
+                                )}
+                            </div>
                             <div style={{ textAlign: "center" }}>
                                 <div style={{ borderBottom: "1px solid black", width: "35mm", marginBottom: "2mm" }}></div>
-                                <div style={{ fontSize: "10px", fontWeight: "bold" }}>Customer Sign</div>
+                                <div style={{ fontSize: "10px", fontWeight: "bold" }}>हस्ताक्षर (Sign)</div>
                             </div>
                         </div>
                     </div>

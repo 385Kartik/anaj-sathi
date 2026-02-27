@@ -15,7 +15,8 @@ const Dashboard = () => {
       const { count } = await supabase
         .from("orders")
         .select("*", { count: "exact", head: true })
-        .eq("order_date", today);
+        .eq("order_date", today)
+        .neq("product_type", "Null"); // <-- FIX: Ignore dummy New Year entries
       return count || 0;
     },
   });
@@ -25,9 +26,14 @@ const Dashboard = () => {
     queryFn: async () => {
       const { data } = await supabase
         .from("orders")
-        .select("pending_amount")
-        .gt("pending_amount", 0);
-      return data?.reduce((sum, o) => sum + Number(o.pending_amount), 0) || 0;
+        .select("total_amount, amount_paid")
+        .neq("product_type", "Null"); // <-- FIX: Ignore dummy entries
+        
+      // Calculate pending safely
+      return data?.reduce((sum, o) => {
+          const pending = Number(o.total_amount || 0) - Number(o.amount_paid || 0);
+          return pending > 0 ? sum + pending : sum;
+      }, 0) || 0;
     },
   });
 
@@ -55,6 +61,7 @@ const Dashboard = () => {
       const { data } = await supabase
         .from("orders")
         .select("*, customers(name, phone)")
+        .neq("product_type", "Null") // <-- FIX: Don't show 'Null' in recent orders
         .order("created_at", { ascending: false })
         .limit(5);
       return data || [];
@@ -97,7 +104,7 @@ const Dashboard = () => {
                 <span className="font-medium text-foreground">{item.product_type}</span>
                 <div className="flex items-center gap-3">
                   <span className="text-muted-foreground">{Number(item.quantity_kg).toLocaleString()} Guni</span>
-                  {Number(item.quantity_kg) <= Number(item.low_stock_threshold) && (
+                  {Number(item.quantity_kg) <= Number(item.low_stock_threshold || 0) && (
                     <span className="text-xs bg-destructive/10 text-destructive px-2 py-0.5 rounded-full">Low</span>
                   )}
                 </div>
@@ -136,7 +143,7 @@ const Dashboard = () => {
               ))}
             </div>
           ) : (
-            <p className="text-muted-foreground text-sm">No orders yet. Create your first order!</p>
+            <p className="text-muted-foreground text-sm">No recent orders yet. Start fresh!</p>
           )}
         </motion.div>
       </div>

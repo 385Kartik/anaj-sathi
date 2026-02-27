@@ -44,7 +44,7 @@ const Drivers = () => {
     },
   });
 
-  // Fetch Existing Sub Areas for Autosuggest
+  // Fetch Existing Sub Areas for Dual Input
   const { data: subAreaOptions } = useQuery({
     queryKey: ["sub-areas-list"],
     queryFn: async () => {
@@ -60,21 +60,17 @@ const Drivers = () => {
 
   // --- SMART FILTER LOGIC (AND CONDITION) ---
   const filteredDrivers = drivers?.filter((d: any) => {
-    // 1. Text Search (Name OR Phone OR Vehicle OR Address)
     const matchesText = !filterText || 
         d.name.toLowerCase().includes(filterText.toLowerCase()) || 
         d.phone.includes(filterText) || 
         (d.vehicle_number && d.vehicle_number.toLowerCase().includes(filterText.toLowerCase())) ||
         (d.address && d.address.toLowerCase().includes(filterText.toLowerCase()));
 
-    // 2. Area Filter (Exact Match)
     const matchesArea = filterArea === "all" || d.area_id === filterArea;
 
-    // 3. Sub Area Filter (Partial Match)
     const matchesSubArea = !filterSubArea || 
         (d.sub_area && d.sub_area.toLowerCase().includes(filterSubArea.toLowerCase()));
 
-    // Return true only if ALL conditions match
     return matchesText && matchesArea && matchesSubArea;
   });
 
@@ -134,7 +130,7 @@ const Drivers = () => {
       setEditOpen(true);
   };
 
-  // Reusable Form Content
+  // Reusable Form Content with Dual Sub Area Logic
   const renderFormContent = (action: () => void, isEdit: boolean) => (
     <div className="space-y-4 pt-4">
         <div className="grid grid-cols-2 gap-4">
@@ -150,12 +146,31 @@ const Drivers = () => {
                     <SelectContent>{areas?.map(a => <SelectItem key={a.id} value={a.id}>{a.area_name}</SelectItem>)}</SelectContent>
                 </Select>
             </div>
-            <div><Label>Sub Area</Label>
-               <Input list="driverSubAreaOptions" value={subArea} onChange={e => setSubArea(e.target.value)} placeholder="Type/Select" />
-               <datalist id="driverSubAreaOptions">{subAreaOptions?.map((item: any) => <option key={item} value={item} />)}</datalist>
+            
+            {/* --- NEW DUAL SUB AREA LOGIC --- */}
+            <div>
+                <Label>Sub Area</Label>
+                <div className="flex gap-2 mt-1">
+                    <Select 
+                        value={subAreaOptions?.includes(subArea) ? subArea : ""} 
+                        onValueChange={setSubArea}
+                    >
+                        <SelectTrigger className="w-[100px]"><SelectValue placeholder="List..." /></SelectTrigger>
+                        <SelectContent>
+                            {subAreaOptions?.map((item: any) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
+                        </SelectContent>
+                    </Select>
+                    <Input 
+                        className="flex-1"
+                        value={subArea} 
+                        onChange={e => setSubArea(e.target.value)} 
+                        placeholder="Or type new..." 
+                    />
+                </div>
             </div>
+
         </div>
-        <Button onClick={action} disabled={!name || !phone} className="w-full">{isEdit ? "Update" : "Add"}</Button>
+        <Button onClick={action} disabled={!name || !phone} className="w-full mt-2">{isEdit ? "Update" : "Add"}</Button>
     </div>
   );
 
