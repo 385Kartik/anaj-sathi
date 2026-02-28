@@ -328,7 +328,7 @@ const Orders = () => {
                             <p style={{ fontWeight: "bold", fontSize: "14px", textTransform: "uppercase", margin: "2px 0" }}>{group.customer?.name}</p>
                             {/* Full Address Added Here */}
                             <p style={{ margin: "0" }}>{group.customer?.address}</p>
-                            <p style={{ margin: "0", fontWeight: "bold" }}>{group.customer?.areas?.area_name} {group.sub_area && `, ${group.sub_area}`}</p>
+                            <p style={{ margin: "0", fontWeight: "bold" }}>{group.sub_area && `${group.sub_area}, `} {group.customer?.areas?.area_name}</p>
                             <p style={{ fontWeight: "bold", margin: "2px 0" }}>Mob: {group.customer?.phone}</p>
                         </div>
 
@@ -391,5 +391,4 @@ const Orders = () => {
     </div>
   );
 };
-
 export default Orders;
