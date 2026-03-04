@@ -10,14 +10,16 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, User, ShoppingBag, CreditCard, Truck } from "lucide-react";
 
+// Backend IDs (English for Database matching)
 const PRODUCT_TYPES = ["Tukdi", "Sasiya", "Tukdi D", "Sasiya D", "Other"];
 
+// Hindi Translations for UI
 const productTranslations: Record<string, string> = {
-  "Tukdi": "Tukdi", 
-  "Sasiya": "Sasiya", 
-  "Tukdi D": "Tukdi Divel", 
-  "Sasiya D": "Sasiya Divel", 
-  "Other": "Other"
+  "Tukdi": "टुकड़ी", 
+  "Sasiya": "सासिया", 
+  "Tukdi D": "टुकड़ी डीलक्स", 
+  "Sasiya D": "सासिया डीलक्स", 
+  "Other": "अन्य"
 };
 
 interface ProductRow {
@@ -30,15 +32,18 @@ const NewOrder = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   
+  // Basic Form State
   const [form, setForm] = useState({
     customerName: "", phone: "", address: "", areaId: "", subArea: "", 
     amountPaid: "", driverId: "", deliveryDate: "", notes: "",
   });
 
+  // Fixed 5 Product Rows State
   const [products, setProducts] = useState<ProductRow[]>(
     PRODUCT_TYPES.map(p => ({ key: p, qty: "", rate: 0 }))
   );
 
+  // --- QUERIES ---
   const { data: areas } = useQuery({
     queryKey: ["areas"],
     queryFn: async () => {
@@ -65,27 +70,48 @@ const NewOrder = () => {
     }
   });
 
+  // --- RATE LOGIC ---
   const getRate = async (pType: string, areaId: string) => {
     if (!pType || pType === "Other" || !areaId) return 0;
-    const { data: areaRate } = await supabase.from("area_rates").select("rate_per_kg").eq("area_id", areaId).eq("product_type", pType).maybeSingle();
+    
+    // 1. Try Area Rate
+    const { data: areaRate } = await supabase.from("area_rates")
+      .select("rate_per_kg")
+      .eq("area_id", areaId)
+      .eq("product_type", pType)
+      .maybeSingle();
+      
     if (areaRate && areaRate.rate_per_kg > 0) return areaRate.rate_per_kg;
-    const { data: globalRate } = await supabase.from("product_rates").select("rate_per_kg").eq("product_type", pType).maybeSingle();
+
+    // 2. Global Rate
+    const { data: globalRate } = await supabase.from("product_rates")
+      .select("rate_per_kg")
+      .eq("product_type", pType)
+      .maybeSingle();
+
     return globalRate ? globalRate.rate_per_kg : 0;
   };
 
+  // --- EFFECTS ---
+  
+  // Update Rates when Area Changes
   useEffect(() => {
     const updateRates = async () => {
         if(!form.areaId) return;
         const updatedItems = await Promise.all(products.map(async (item) => {
+            // Preserve manual rate for "Other" if entered, else 0
             if (item.key === "Other") return item;
+            
             const newRate = await getRate(item.key, form.areaId);
             return { ...item, rate: newRate };
         }));
         setProducts(updatedItems);
     };
     updateRates();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.areaId]);
+
+  // --- HANDLERS ---
 
   const handleProductChange = (index: number, field: keyof ProductRow, val: any) => {
     const newProducts = [...products];
@@ -119,11 +145,14 @@ const NewOrder = () => {
     }
   };
 
+  // --- CALCULATIONS ---
   const grandTotal = products.reduce((sum, item) => sum + (Number(item.qty || 0) * item.rate), 0);
   const pendingCalc = grandTotal - Number(form.amountPaid || 0);
 
+  // --- SUBMISSION ---
   const createOrder = useMutation({
     mutationFn: async () => {
+      // 1. Customer Logic
       let customerId: string;
       const { data: existing } = await supabase.from("customers").select("id").eq("phone", form.phone).maybeSingle();
 
@@ -138,15 +167,20 @@ const NewOrder = () => {
         customerId = newCustomer.id;
       }
 
+      // 2. Distribute Payment & Create Orders
       let remainingPayment = Number(form.amountPaid || 0);
 
+      // Loop through the 5 rows
       for (const item of products) {
           const qty = Number(item.qty || 0);
+          
           if (qty > 0) {
               const itemTotal = qty * item.rate;
               const paidForThisItem = Math.min(itemTotal, remainingPayment);
               remainingPayment = Math.max(0, remainingPayment - paidForThisItem);
 
+              // Insert
+              // @ts-ignore
               const { error: orderError } = await supabase.from("orders").insert({
                 customer_id: customerId, 
                 product_type: item.key, 
@@ -158,10 +192,11 @@ const NewOrder = () => {
                 delivery_date: form.deliveryDate || new Date().toISOString().split('T')[0],
                 sub_area: form.subArea,
                 status: "pending"
-              } as any);
+              });
               
               if (orderError) throw orderError;
 
+              // Stock Deduction
               if(item.key !== "Other" && item.key !== "Null") {
                  const { data: stockItem } = await supabase.from("stock").select("*").eq("product_type", item.key).maybeSingle();
                  if (stockItem) {
@@ -177,10 +212,18 @@ const NewOrder = () => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.customerName || !form.phone || !form.areaId) { toast.error("Customer details missing."); return; }
+    
+    // Check Mandatory Fields
+    if (!form.customerName || !form.phone) { toast.error("Customer Name and Phone are required."); return; }
+    if (!form.address) { toast.error("Address is mandatory."); return; }
+    if (!form.subArea) { toast.error("Sub Area / Location is mandatory."); return; }
+    if (!form.areaId) { toast.error("Main Area is mandatory."); return; }
+    
     const hasItems = products.some(p => Number(p.qty) > 0);
     if (!hasItems) { toast.error("Please enter quantity for at least one product."); return; }
+    
     if (!/^\d{10}$/.test(form.phone)) { toast.error("Invalid phone number."); return; }
+    
     createOrder.mutate();
   };
 
@@ -197,17 +240,11 @@ const NewOrder = () => {
                     <div className="space-y-3">
                         <div><Label>Phone *</Label><Input value={form.phone} onChange={(e) => handlePhoneChange(e.target.value)} maxLength={10} placeholder="Search..." /></div>
                         <div><Label>Name *</Label><Input value={form.customerName} onChange={(e) => setForm({...form, customerName: e.target.value})} /></div>
-                        <div><Label>Address</Label><Input value={form.address} onChange={(e) => setForm({...form, address: e.target.value})} placeholder="Full Address" /></div>
-                        <div><Label>Area *</Label>
-                            <Select value={form.areaId} onValueChange={(v) => setForm({...form, areaId: v})}>
-                                <SelectTrigger><SelectValue placeholder="Select Area" /></SelectTrigger>
-                                <SelectContent>{areas?.map((a) => <SelectItem key={a.id} value={a.id}>{a.area_name}</SelectItem>)}</SelectContent>
-                            </Select>
-                        </div>
+                        <div><Label>Address *</Label><Input value={form.address} onChange={(e) => setForm({...form, address: e.target.value})} placeholder="Full Address" /></div>
                         
-                        {/* --- NEW DUAL SUB AREA LOGIC --- */}
+                        {/* SWAPPED: Sub Area now comes first */}
                         <div>
-                            <Label>Sub Area / Location</Label>
+                            <Label>Sub Area / Location *</Label>
                             <div className="flex gap-2 mt-1">
                                 <Select 
                                     value={subAreaOptions?.includes(form.subArea) ? form.subArea : ""} 
@@ -227,6 +264,13 @@ const NewOrder = () => {
                             </div>
                         </div>
 
+                        {/* SWAPPED: Main Area now comes second */}
+                        <div><Label>Main Area *</Label>
+                            <Select value={form.areaId} onValueChange={(v) => setForm({...form, areaId: v})}>
+                                <SelectTrigger><SelectValue placeholder="Select Area" /></SelectTrigger>
+                                <SelectContent>{areas?.map((a) => <SelectItem key={a.id} value={a.id}>{a.area_name}</SelectItem>)}</SelectContent>
+                            </Select>
+                        </div>
                     </div>
                 </div>
 
@@ -249,6 +293,7 @@ const NewOrder = () => {
                 <div className="bg-card border rounded-xl p-5 shadow-sm">
                     <div className="flex items-center gap-2 mb-4 border-b pb-2"><ShoppingBag className="w-5 h-5 text-primary" /> <h2 className="font-semibold">Order Items</h2></div>
                     
+                    {/* Headers in Hindi/English */}
                     <div className="grid grid-cols-12 gap-3 mb-2 text-xs font-medium text-muted-foreground px-1">
                         <div className="col-span-4">प्रोडक्ट (PRODUCT)</div>
                         <div className="col-span-3">रेट (RATE)</div>
@@ -256,6 +301,7 @@ const NewOrder = () => {
                         <div className="col-span-2 text-right">कुल (TOTAL)</div>
                     </div>
 
+                    {/* Fixed Rows with Hindi Translation */}
                     <div className="space-y-3">
                         {products.map((p, idx) => (
                             <div key={p.key} className="grid grid-cols-12 gap-3 items-center bg-muted/20 p-2 rounded border">
