@@ -17,8 +17,8 @@ const PRODUCT_TYPES = ["Tukdi", "Sasiya", "Tukdi D", "Sasiya D", "Other"];
 const productTranslations: Record<string, string> = {
   "Tukdi": "टुकड़ी", 
   "Sasiya": "सासिया", 
-  "Tukdi D": "टुकड़ी डीलक्स", 
-  "Sasiya D": "सासिया डीलक्स", 
+  "Tukdi D": "टुकड़ी डिवेल", 
+  "Sasiya D": "सासिया डिवेल", 
   "Other": "अन्य"
 };
 
