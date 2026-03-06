@@ -314,7 +314,7 @@ const Orders = () => {
       <div style={{ display: "none" }}>
         <div ref={printRef}>
             {filteredGroups.filter((g:any) => selectedGroupIds.includes(g.key)).map((group:any) => (
-                <div key={group.key} style={{ width: "80mm", padding: "2mm", fontFamily: "'Noto Sans Devanagari', sans-serif", pageBreakAfter: "always", marginBottom: "5mm" }}>
+                <div key={group.key} style={{ width: "80mm", padding: "1mm", fontFamily: "'Noto Sans Devanagari', sans-serif", pageBreakAfter: "always", marginBottom: "5mm" }}>
                     <div style={{ border: "1px solid black", padding: "2mm", minHeight: "300px", position: "relative" }}>
                         <div style={{ textAlign: "center", borderBottom: "1px dashed black", paddingBottom: "2mm", marginBottom: "2mm" }}>
                             <h3 style={{ fontSize: "16px", fontWeight: "bold", margin: "0", color: "black" }}>|| स्वामीनारायण विजयते ||</h3>
@@ -324,21 +324,20 @@ const Orders = () => {
                         
                         {/* CUSTOMER DETAILS WITH FULL ADDRESS IN HINDI */}
                         <div style={{ fontSize: "12px", marginBottom: "3mm" }}>
-                            <p style={{ fontSize: "10px", color: "#666", margin: "0" }}>ग्राहक (Customer):</p>
-                            <p style={{ fontWeight: "bold", fontSize: "14px", textTransform: "uppercase", margin: "2px 0" }}>{group.customer?.name}</p>
+                            <p style={{ fontWeight: "bold", fontSize: "15px", textTransform: "uppercase", margin: "2px 0" }}>{group.customer?.name}</p>
                             {/* Full Address Added Here */}
-                            <p style={{ margin: "0" }}>{group.customer?.address}</p>
-                            <p style={{ margin: "0", fontWeight: "bold" }}>{group.sub_area && `${group.sub_area}, `} {group.customer?.areas?.area_name}</p>
-                            <p style={{ fontWeight: "bold", margin: "2px 0" }}>Mob: {group.customer?.phone}</p>
+                            <p style={{ margin: "0", fontWeight: "bold", fontSize: "15px" }}>{group.customer?.address}</p>
+                            <p style={{ margin: "0", fontWeight: "bold", fontSize: "15px"}}>{group.sub_area && `${group.sub_area}, `} {group.customer?.areas?.area_name}</p>
+                            <p style={{ fontWeight: "bold", margin: "2px 0", fontSize: "15px" }}>Mob: {group.customer?.phone}</p>
                         </div>
 
                         {/* PRODUCT TABLE IN HINDI */}
-                        <table style={{ width: "100%", fontSize: "12px", borderCollapse: "collapse", marginBottom: "3mm" }}>
+                        <table style={{ width: "100%", fontSize: "15px", borderCollapse: "collapse", marginBottom: "3mm" }}>
                             <thead>
                                 <tr style={{ borderTop: "1px solid black", borderBottom: "1px solid black" }}>
                                     <th style={{ textAlign: "left", padding: "1mm 0" }}>विवरण (Item)</th>
-                                    <th style={{ textAlign: "right" }}>मात्रा (Qty)</th>
-                                    <th style={{ textAlign: "right" }}>रकम (Amt)</th>
+                                    <th style={{ textAlign: "right", fontWeight: "bold", fontSize: "15px" }}>मात्रा (Qty)</th>
+                                    <th style={{ textAlign: "right", fontWeight: "bold", fontSize: "15px" }}>रकम (Amt)</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -347,9 +346,9 @@ const Orders = () => {
                                     if(item.qty > 0) return (
                                         <tr key={p}>
                                             {/* Translate Product Name */}
-                                            <td style={{ padding: "1.5mm 0" }}>{productTranslations[p] || p}</td>
-                                            <td style={{ textAlign: "right" }}>{item.qty} गुनी</td>
-                                            <td style={{ textAlign: "right" }}>₹{item.amount}</td>
+                                            <td style={{ padding: "1.5mm 0", fontWeight: "bold", fontSize: "15px" }}>{productTranslations[p] || p}</td>
+                                            <td style={{ textAlign: "center", fontWeight: "bold", fontSize: "15px" }}>{item.qty} गुनी</td>
+                                            <td style={{ textAlign: "right", fontWeight: "bold", fontSize: "15px" }}>₹{item.amount}</td>
                                         </tr>
                                     )
                                     return null;
@@ -391,4 +390,5 @@ const Orders = () => {
     </div>
   );
 };
+
 export default Orders;
