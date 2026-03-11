@@ -13,11 +13,11 @@ import { Loader2, ArrowLeft, Save } from "lucide-react";
 const PRODUCT_TYPES = ["Tukdi", "Sasiya", "Tukdi D", "Sasiya D", "Other"];
 
 const productTranslations: Record<string, string> = {
-  "Tukdi": "Tukdi", 
-  "Sasiya": "Sasiya", 
-  "Tukdi D": "Tukdi Divel", 
-  "Sasiya D": "Sasiya Divel", 
-  "Other": "Other"
+  "Tukdi": "टुकड़ी", 
+  "Sasiya": "सासिया", 
+  "Tukdi D": "टुकड़ी डीलक्स", 
+  "Sasiya D": "सासिया डीलक्स", 
+  "Other": "अन्य"
 };
 
 interface ProductRow {
@@ -45,7 +45,6 @@ const EditOrder = () => {
   const { data: areas } = useQuery({ queryKey: ["areas"], queryFn: async () => { const { data } = await supabase.from("areas").select("*").order("area_name"); return data || []; } });
   const { data: drivers } = useQuery({ queryKey: ["drivers"], queryFn: async () => { const { data } = await supabase.from("drivers").select("*").order("name"); return data || []; } });
 
-  // Fetch Sub Areas
   const { data: subAreaOptions } = useQuery({
     queryKey: ["sub-areas-list"],
     queryFn: async () => {
@@ -88,21 +87,30 @@ const EditOrder = () => {
         subArea: anchorOrder.sub_area || "",
         driverId: anchorOrder.driver_id || "none",
         status: anchorOrder.status || "pending",
-        amountPaid: String(siblingOrders.reduce((sum: number, o: any) => sum + (o.amount_paid || 0), 0))
+        amountPaid: String(siblingOrders.reduce((sum: number, o: any) => sum + (Number(o.amount_paid) || 0), 0))
       });
 
       const loadProducts = async () => {
         const newProducts = await Promise.all(PRODUCT_TYPES.map(async (pType) => {
-            const existing = siblingOrders.find((o: any) => o.product_type === pType);
+            // FIX 1: Map existing orders correctly to show exact Old Quantity
+            let existing = siblingOrders.find((o: any) => o.product_type === pType);
+            
+            // If pType is 'Other', check if there's any product not in PRODUCT_TYPES list
+            if (pType === "Other" && !existing) {
+                existing = siblingOrders.find((o: any) => !PRODUCT_TYPES.includes(o.product_type) && o.product_type !== "Null");
+            }
+
             let rate = 0;
             if (existing) {
                 rate = existing.rate_per_kg;
             } else {
                 rate = await getRate(pType, anchorOrder.customers?.area_id);
             }
+
             return {
                 key: pType,
-                qty: existing ? String(existing.quantity_kg) : "",
+                // FIX 2: Set qty to existing quantity so it shows up in input
+                qty: existing ? String(existing.quantity_kg) : "", 
                 rate: rate,
                 orderId: existing ? existing.id : null,
                 oldQty: existing ? Number(existing.quantity_kg) : 0
@@ -153,7 +161,11 @@ const EditOrder = () => {
         for (const p of products) {
             const newQty = Number(p.qty || 0);
             
+            // FIX 3: Calculate difference correctly. 
+            // If old was 5, new is 6. Diff = 5 - 6 = -1 (Means deduct 1 more from stock)
+            // If old was 5, new is 2. Diff = 5 - 2 = 3 (Means add 3 back to stock)
             const diff = p.oldQty - newQty; 
+            
             if (diff !== 0 && p.key !== "Other" && p.key !== "Null") {
                 const { data: stock } = await supabase.from("stock").select("*").eq("product_type", p.key).maybeSingle();
                 if (stock) {
@@ -167,19 +179,27 @@ const EditOrder = () => {
                 remainingPaid = Math.max(0, remainingPaid - linePaid);
 
                 const orderData = {
-                    customer_id: anchorOrder.customer_id, product_type: p.key, quantity_kg: newQty,
-                    rate_per_kg: p.rate, total_amount: lineTotal, amount_paid: linePaid,
+                    customer_id: anchorOrder.customer_id, 
+                    product_type: p.key, 
+                    quantity_kg: newQty, // FIX 4: Saves EXACTLY what is in the box, doesn't add to old
+                    rate_per_kg: p.rate, 
+                    total_amount: lineTotal, 
+                    amount_paid: linePaid,
                     driver_id: form.driverId === "none" ? null : form.driverId,
-                    status: form.status, sub_area: form.subArea,
-                    delivery_date: anchorOrder.delivery_date, created_at: anchorOrder.created_at 
+                    status: form.status, 
+                    sub_area: form.subArea,
+                    delivery_date: anchorOrder.delivery_date
                 };
 
                 if (p.orderId) {
+                    // Update existing row
                     await supabase.from("orders").update(orderData as any).eq("id", p.orderId);
                 } else {
+                    // Insert new row if didn't exist before
                     await supabase.from("orders").insert(orderData as any);
                 }
             } else {
+                // If new Qty is 0 but it had an ID, user removed it. Delete it.
                 if (p.orderId) {
                     await supabase.from("orders").delete().eq("id", p.orderId);
                 }
@@ -187,7 +207,7 @@ const EditOrder = () => {
         }
     },
     onSuccess: () => {
-        toast.success("Order & Customer updated successfully!");
+        toast.success("Order updated successfully!");
         queryClient.invalidateQueries();
         navigate("/orders");
     },
@@ -209,14 +229,7 @@ const EditOrder = () => {
                 <div><Label>Name</Label><Input value={form.customerName} onChange={e => setForm({...form, customerName: e.target.value})} /></div>
                 <div><Label>Phone</Label><Input value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} /></div>
                 <div><Label>Address</Label><Input value={form.address} onChange={e => setForm({...form, address: e.target.value})} placeholder="Full Address" /></div>
-                <div><Label>Area</Label>
-                    <Select value={form.areaId} onValueChange={handleAreaChange}>
-                        <SelectTrigger><SelectValue/></SelectTrigger>
-                        <SelectContent>{areas?.map((a:any) => <SelectItem key={a.id} value={a.id}>{a.area_name}</SelectItem>)}</SelectContent>
-                    </Select>
-                </div>
                 
-                {/* --- DUAL SUB AREA LOGIC FOR EDIT --- */}
                 <div>
                     <Label>Sub Area / Location</Label>
                     <div className="flex gap-2 mt-1">
@@ -238,6 +251,12 @@ const EditOrder = () => {
                     </div>
                 </div>
 
+                <div><Label>Main Area</Label>
+                    <Select value={form.areaId} onValueChange={handleAreaChange}>
+                        <SelectTrigger><SelectValue/></SelectTrigger>
+                        <SelectContent>{areas?.map((a:any) => <SelectItem key={a.id} value={a.id}>{a.area_name}</SelectItem>)}</SelectContent>
+                    </Select>
+                </div>
             </div>
 
             <div className="bg-card border rounded-xl p-5 space-y-4">
@@ -260,7 +279,7 @@ const EditOrder = () => {
         <div className="lg:col-span-2 space-y-6">
             <div className="bg-card border rounded-xl p-5">
                 <h3 className="font-semibold border-b pb-4 mb-4 flex justify-between">
-                    <span>Order Items</span><span className="text-sm text-muted-foreground">Rate auto-filled from Area</span>
+                    <span>Order Items</span><span className="text-sm text-muted-foreground">Modify quantities below</span>
                 </h3>
                 
                 <div className="grid grid-cols-12 gap-3 mb-2 text-xs font-medium text-muted-foreground px-1">
@@ -320,5 +339,4 @@ const EditOrder = () => {
     </div>
   );
 };
-
 export default EditOrder;
