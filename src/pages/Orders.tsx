@@ -9,20 +9,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Search, PlusCircle, Printer, Trash2, Edit, FileSpreadsheet, Truck, AlertTriangle } from "lucide-react";
+import { Search, PlusCircle, Printer, Trash2, Edit, FileSpreadsheet, AlertTriangle, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { useReactToPrint } from "react-to-print";
 import * as XLSX from "xlsx";
 
-// Fixed Columns Configuration
 const PRODUCT_COLS = ["Tukdi", "Sasiya", "Tukdi D", "Sasiya D"];
 
-// Product Translations for Hindi Print
 const productTranslations: Record<string, string> = {
   "Tukdi": "टुकड़ी", 
   "Sasiya": "सासिया", 
-  "Tukdi D": "टुकड़ी डिवेल", 
-  "Sasiya D": "सासिया डिवेल", 
+  "Tukdi D": "टुकड़ी दिवेल", 
+  "Sasiya D": "सासिया दिवेल", 
   "Other": "अन्य",
   "Null": "अन्य"
 };
@@ -38,26 +36,20 @@ const Orders = () => {
   const [subAreaSearch, setSubAreaSearch] = useState("");
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [deliveryFilter, setDeliveryFilter] = useState("all");
+  const [driverFilter, setDriverFilter] = useState("all"); // NEW DRIVER FILTER STATE
 
-  // --- BULK PRINT STATE ---
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
   const printRef = useRef<HTMLDivElement>(null);
 
-  // --- QUERIES ---
-  const { data: areas } = useQuery({
-    queryKey: ["areas"],
-    queryFn: async () => {
-      const { data } = await supabase.from("areas").select("*").order("area_name");
-      return data || [];
-    },
-  });
+  const { data: areas } = useQuery({ queryKey: ["areas"], queryFn: async () => { const { data } = await supabase.from("areas").select("*").order("area_name"); return data || []; } });
+  
+  const { data: drivers } = useQuery({ queryKey: ["drivers"], queryFn: async () => { const { data } = await supabase.from("drivers").select("*, areas(area_name)").order("name"); return data || []; } });
 
   const { data: orders } = useQuery({
     queryKey: ["orders"],
     queryFn: async () => {
       let query = supabase
         .from("orders")
-        // Fetching address as requested
         .select("*, customers(name, phone, address, area_id, areas(area_name)), drivers(name, phone)")
         .order("order_number", { ascending: false }); 
       const { data } = await query;
@@ -65,14 +57,12 @@ const Orders = () => {
     },
   });
 
-  // --- GROUPING LOGIC ---
   const groupedOrders = useMemo(() => {
     if (!orders) return [];
 
     const groups: Record<string, any> = {};
 
     orders.forEach((o: any) => {
-        // Unique Key
         const dateKey = o.delivery_date || o.order_date; 
         const key = `${o.customer_id}_${dateKey}_${o.sub_area || 'NOSUB'}`;
 
@@ -85,13 +75,11 @@ const Orders = () => {
                 customer: o.customers,
                 sub_area: o.sub_area,
                 driver: o.drivers,
+                driver_id: o.driver_id,
                 status: o.status,
                 products: {
-                    "Tukdi": { qty: 0, amount: 0 },
-                    "Sasiya": { qty: 0, amount: 0 },
-                    "Tukdi D": { qty: 0, amount: 0 },
-                    "Sasiya D": { qty: 0, amount: 0 },
-                    "Other": { qty: 0, amount: 0 } 
+                    "Tukdi": { qty: 0, amount: 0 }, "Sasiya": { qty: 0, amount: 0 },
+                    "Tukdi D": { qty: 0, amount: 0 }, "Sasiya D": { qty: 0, amount: 0 }, "Other": { qty: 0, amount: 0 } 
                 },
                 totalAmount: 0,
                 amountPaid: 0
@@ -104,49 +92,40 @@ const Orders = () => {
         g.amountPaid += Number(o.amount_paid || 0);
 
         let pType = o.product_type;
-        if (!PRODUCT_COLS.includes(pType)) {
-            pType = "Other";
-        }
+        if (!PRODUCT_COLS.includes(pType)) pType = "Other";
 
         g.products[pType].qty += Number(o.quantity_kg || 0);
         g.products[pType].amount += Number(o.total_amount || 0);
     });
 
-    return Object.values(groups).sort((a: any, b: any) => 
-        new Date(b.date).getTime() - new Date(a.date).getTime()
-    );
+    return Object.values(groups).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [orders]);
 
-
-  // --- MUTATIONS ---
   const updateStatus = useMutation({
     mutationFn: async ({ ids, status }: { ids: string[], status: string }) => {
         const { error } = await supabase.from("orders").update({ status }).in("id", ids);
         if(error) throw error;
     },
-    onSuccess: () => {
-        toast.success("Status updated!");
-        queryClient.invalidateQueries({ queryKey: ["orders"] });
+    onSuccess: () => { toast.success("Status updated!"); queryClient.invalidateQueries({ queryKey: ["orders"] }); },
+  });
+
+  const updateDriver = useMutation({
+    mutationFn: async ({ ids, driver_id }: { ids: string[], driver_id: string | null }) => {
+        const { error } = await supabase.from("orders").update({ driver_id }).in("id", ids);
+        if(error) throw error;
     },
-    onError: (e: any) => toast.error(e.message)
+    onSuccess: () => { toast.success("Driver assigned!"); queryClient.invalidateQueries({ queryKey: ["orders"] }); },
   });
 
   const deleteGroup = useMutation({
-    mutationFn: async (ids: string[]) => {
-        const { error } = await supabase.from("orders").delete().in("id", ids);
-        if(error) throw error;
-    },
-    onSuccess: () => {
-        toast.success("Orders deleted");
-        queryClient.invalidateQueries({ queryKey: ["orders"] });
-    }
+    mutationFn: async (ids: string[]) => { const { error } = await supabase.from("orders").delete().in("id", ids); if(error) throw error; },
+    onSuccess: () => { toast.success("Orders deleted"); queryClient.invalidateQueries({ queryKey: ["orders"] }); }
   });
 
   const clearOldOrders = useMutation({
     mutationFn: async () => {
       const { error: delErr } = await supabase.from("orders").delete().neq("product_type", "Null").neq("product_type", "Other");
       if(delErr) throw delErr;
-
       const { data: remaining } = await supabase.from("orders").select("id, customer_id, created_at").order("created_at", { ascending: false });
       if (remaining) {
           const seen = new Set();
@@ -158,40 +137,31 @@ const Orders = () => {
           if (toDelete.length > 0) await supabase.from("orders").delete().in("id", toDelete);
       }
     },
-    onSuccess: () => {
-      toast.success("Cleaned!");
-      queryClient.invalidateQueries({ queryKey: ["orders"] });
-    }
+    onSuccess: () => { toast.success("Cleaned!"); queryClient.invalidateQueries({ queryKey: ["orders"] }); }
   });
 
-  // --- FILTERS ---
   const filteredGroups = groupedOrders.filter((g: any) => {
     const matchesName = !searchName || g.customer?.name?.toLowerCase().includes(searchName.toLowerCase());
     const matchesPhone = !searchPhone || g.customer?.phone?.includes(searchPhone);
     const matchesArea = areaFilter === "all" || g.customer?.area_id === areaFilter;
     const subAreaDisplay = g.sub_area === "New Year Entry" ? "" : g.sub_area;
     const matchesSubArea = !subAreaSearch || subAreaDisplay?.toLowerCase().includes(subAreaSearch.toLowerCase());
+    
     const pendingAmount = g.totalAmount - g.amountPaid;
-    const matchesPayment = 
-        paymentFilter === "all" ? true :
-        paymentFilter === "pending" ? pendingAmount > 0 :
-        paymentFilter === "paid" ? pendingAmount <= 0 : true;
-    const matchesDelivery = 
-        deliveryFilter === "all" ? true :
-        g.status === deliveryFilter;
+    const matchesPayment = paymentFilter === "all" ? true : paymentFilter === "pending" ? pendingAmount > 0 : paymentFilter === "paid" ? pendingAmount <= 0 : true;
+    const matchesDelivery = deliveryFilter === "all" ? true : g.status === deliveryFilter;
+    
+    // DRIVER FILTER LOGIC
+    const matchesDriver = driverFilter === "all" ? true :
+                          driverFilter === "none" ? !g.driver_id :
+                          g.driver_id === driverFilter;
 
-    return matchesName && matchesPhone && matchesArea && matchesSubArea && matchesPayment && matchesDelivery;
+    return matchesName && matchesPhone && matchesArea && matchesSubArea && matchesPayment && matchesDelivery && matchesDriver;
   });
 
-  const toggleSelect = (key: string) => {
-    setSelectedGroupIds(prev => prev.includes(key) ? prev.filter(x => x !== key) : [...prev, key]);
-  };
-  const toggleAll = () => {
-    if (selectedGroupIds.length === filteredGroups.length) setSelectedGroupIds([]);
-    else setSelectedGroupIds(filteredGroups.map((g:any) => g.key));
-  };
+  const toggleSelect = (key: string) => { setSelectedGroupIds(prev => prev.includes(key) ? prev.filter(x => x !== key) : [...prev, key]); };
+  const toggleAll = () => { if (selectedGroupIds.length === filteredGroups.length) setSelectedGroupIds([]); else setSelectedGroupIds(filteredGroups.map((g:any) => g.key)); };
 
-  // --- EXPORT ---
   const exportToExcel = () => {
     if (!filteredGroups.length) return toast.error("No data");
     const data = filteredGroups.map((g: any) => ({
@@ -200,10 +170,10 @@ const Orders = () => {
       "Phone": g.customer?.phone,
       "Area": g.customer?.areas?.area_name,
       "Sub Area": g.sub_area,
-      "Tukdi": g.products["Tukdi"].qty > 0 ? `${g.products["Tukdi"].qty} (${g.products["Tukdi"].amount})` : "-",
-      "Sasiya": g.products["Sasiya"].qty > 0 ? `${g.products["Sasiya"].qty} (${g.products["Sasiya"].amount})` : "-",
-      "Tukdi D": g.products["Tukdi D"].qty > 0 ? `${g.products["Tukdi D"].qty} (${g.products["Tukdi D"].amount})` : "-",
-      "Sasiya D": g.products["Sasiya D"].qty > 0 ? `${g.products["Sasiya D"].qty} (${g.products["Sasiya D"].amount})` : "-",
+      "Tukdi": g.products["Tukdi"].qty > 0 ? g.products["Tukdi"].qty : "-",
+      "Sasiya": g.products["Sasiya"].qty > 0 ? g.products["Sasiya"].qty : "-",
+      "Tukdi D": g.products["Tukdi D"].qty > 0 ? g.products["Tukdi D"].qty : "-",
+      "Sasiya D": g.products["Sasiya D"].qty > 0 ? g.products["Sasiya D"].qty : "-",
       "Total Amount": g.totalAmount,
       "Pending": g.totalAmount - g.amountPaid,
       "Status": g.status,
@@ -233,12 +203,24 @@ const Orders = () => {
         <Tabs value={deliveryFilter} onValueChange={setDeliveryFilter} className="w-full">
             <TabsList><TabsTrigger value="all">All Orders</TabsTrigger><TabsTrigger value="pending">Pending Delivery</TabsTrigger><TabsTrigger value="delivered">Delivered</TabsTrigger></TabsList>
         </Tabs>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 bg-card p-4 rounded-xl border shadow-sm">
+        
+        {/* --- EXPANDED FILTER GRID TO 6 COLUMNS --- */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 bg-card p-4 rounded-xl border shadow-sm">
             <Input value={searchName} onChange={e => setSearchName(e.target.value)} placeholder="Search Name..." className="h-9" />
             <Input value={searchPhone} onChange={e => setSearchPhone(e.target.value)} placeholder="Phone..." className="h-9" />
-            <Select value={areaFilter} onValueChange={setAreaFilter}><SelectTrigger className="h-9"><SelectValue placeholder="Area" /></SelectTrigger><SelectContent><SelectItem value="all">All</SelectItem>{areas?.map((a:any) => <SelectItem key={a.id} value={a.id}>{a.area_name}</SelectItem>)}</SelectContent></Select>
+            <Select value={areaFilter} onValueChange={setAreaFilter}><SelectTrigger className="h-9"><SelectValue placeholder="Area" /></SelectTrigger><SelectContent><SelectItem value="all">All Areas</SelectItem>{areas?.map((a:any) => <SelectItem key={a.id} value={a.id}>{a.area_name}</SelectItem>)}</SelectContent></Select>
             <Input value={subAreaSearch} onChange={e => setSubAreaSearch(e.target.value)} placeholder="Sub Area..." className="h-9" />
-            <Select value={paymentFilter} onValueChange={setPaymentFilter}><SelectTrigger className="h-9"><SelectValue placeholder="Payment" /></SelectTrigger><SelectContent><SelectItem value="all">All</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="paid">Paid</SelectItem></SelectContent></Select>
+            <Select value={paymentFilter} onValueChange={setPaymentFilter}><SelectTrigger className="h-9"><SelectValue placeholder="Payment" /></SelectTrigger><SelectContent><SelectItem value="all">All Payments</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="paid">Paid</SelectItem></SelectContent></Select>
+            
+            {/* NEW DRIVER FILTER */}
+            <Select value={driverFilter} onValueChange={setDriverFilter}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Driver" /></SelectTrigger>
+                <SelectContent>
+                    <SelectItem value="all">All Drivers</SelectItem>
+                    <SelectItem value="none">Unassigned / Self</SelectItem>
+                    {drivers?.map((d:any) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
+                </SelectContent>
+            </Select>
         </div>
       </div>
 
@@ -247,12 +229,12 @@ const Orders = () => {
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50 text-xs">
-                <TableHead className="w-[30px]"><Checkbox checked={selectedGroupIds.length === filteredGroups.length && filteredGroups.length > 0} onCheckedChange={toggleAll}/></TableHead>
-                <TableHead>Customer</TableHead>
+                <TableHead className="w-[40px] text-center"><Checkbox checked={selectedGroupIds.length === filteredGroups.length && filteredGroups.length > 0} onCheckedChange={toggleAll}/></TableHead>
+                <TableHead className="min-w-[150px]">Customer</TableHead>
                 {PRODUCT_COLS.map(col => <TableHead key={col} className="text-center bg-blue-50/30 text-blue-800">{col}</TableHead>)}
                 <TableHead className="text-right">Total</TableHead>
                 <TableHead className="text-right text-red-600">Payment</TableHead>
-                <TableHead className="text-center">Delivery Status</TableHead>
+                <TableHead className="text-center min-w-[160px]">Status / Driver</TableHead>
                 <TableHead className="text-center">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -263,12 +245,12 @@ const Orders = () => {
                   
                   return (
                     <TableRow key={group.key} className="hover:bg-muted/30">
-                        <TableCell><Checkbox checked={selectedGroupIds.includes(group.key)} onCheckedChange={() => toggleSelect(group.key)} /></TableCell>
+                        <TableCell className="text-center"><Checkbox checked={selectedGroupIds.includes(group.key)} onCheckedChange={() => toggleSelect(group.key)} /></TableCell>
                         <TableCell>
                             <div>
-                                <p className="font-medium text-sm">{group.customer?.name}</p>
+                                <p className="font-medium text-sm leading-tight mb-1">{group.customer?.name}</p>
                                 <p className="text-xs text-muted-foreground">{group.customer?.phone}</p>
-                                <p className="text-xs font-semibold text-primary">{group.customer?.areas?.area_name} {displaySubArea && `(${displaySubArea})`}</p>
+                                <p className="text-xs font-semibold text-primary mt-0.5">{group.customer?.areas?.area_name} {displaySubArea && `(${displaySubArea})`}</p>
                             </div>
                         </TableCell>
                         
@@ -289,28 +271,53 @@ const Orders = () => {
 
                         <TableCell className="text-right font-bold">₹{group.totalAmount}</TableCell>
                         <TableCell className={`text-right font-bold text-xs ${pending > 0 ? "text-red-600" : "text-green-600"}`}>{pending > 0 ? `₹${pending}` : "Paid"}</TableCell>
-                        <TableCell className="text-center">
-                            <Select defaultValue={group.status} onValueChange={(val) => updateStatus.mutate({ ids: group.ids, status: val })}>
-                                <SelectTrigger className={`h-6 text-[10px] w-[90px] border-0 mx-auto ${group.status === 'delivered' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}><SelectValue /></SelectTrigger>
-                                <SelectContent><SelectItem value="pending">Pending</SelectItem><SelectItem value="delivered">Delivered</SelectItem></SelectContent>
-                            </Select>
+                        
+                        <TableCell className="p-2 align-middle">
+                            <div className="flex flex-col gap-2 items-center justify-center w-full">
+                                <Select defaultValue={group.status} onValueChange={(val) => updateStatus.mutate({ ids: group.ids, status: val })}>
+                                    <SelectTrigger className={`h-7 text-xs w-[140px] font-medium border focus:ring-0 ${group.status === 'delivered' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="pending">Pending</SelectItem>
+                                        <SelectItem value="delivered">Delivered</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                                
+                                <Select defaultValue={group.driver_id || "none"} onValueChange={(val) => updateDriver.mutate({ ids: group.ids, driver_id: val === "none" ? null : val })}>
+                                    <SelectTrigger className="h-7 text-xs w-[140px] border-dashed border-gray-300 bg-gray-50 focus:ring-0 hover:bg-gray-100 transition-colors">
+                                        <div className="flex items-center gap-1.5 overflow-hidden w-full">
+                                            <Truck className="w-3.5 h-3.5 text-gray-500 shrink-0" />
+                                            <span className="truncate flex-1 text-left"><SelectValue placeholder="Assign Driver" /></span>
+                                        </div>
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="none" className="text-xs text-muted-foreground">Unassigned / Self</SelectItem>
+                                        {drivers?.map((d: any) => (
+                                            <SelectItem key={d.id} value={d.id} className="text-xs">
+                                                {d.name} <span className="text-gray-400">({d.areas?.area_name || "All"})</span>
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
                         </TableCell>
-                        <TableCell className="text-center">
+
+                        <TableCell className="text-center align-middle">
                             <div className="flex justify-center gap-1">
-                                <Button size="icon" variant="outline" className="h-7 w-7" onClick={() => navigate(`/orders/edit/${group.primaryId}`)}><Edit className="w-3 h-3" /></Button>
-                                <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => { if(confirm("Delete entire order set?")) deleteGroup.mutate(group.ids); }}><Trash2 className="w-3 h-3" /></Button>
+                                <Button size="icon" variant="outline" className="h-8 w-8" onClick={() => navigate(`/orders/edit/${group.primaryId}`)}><Edit className="w-3.5 h-3.5" /></Button>
+                                <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive hover:bg-destructive/10" onClick={() => { if(confirm("Delete entire order set?")) deleteGroup.mutate(group.ids); }}><Trash2 className="w-3.5 h-3.5" /></Button>
                             </div>
                         </TableCell>
                     </TableRow>
                   )
               })}
-              {filteredGroups.length === 0 && <TableRow><TableCell colSpan={10} className="text-center py-8">No orders found</TableCell></TableRow>}
+              {filteredGroups.length === 0 && <TableRow><TableCell colSpan={10} className="text-center py-10 text-muted-foreground">No orders found</TableCell></TableRow>}
             </TableBody>
           </Table>
         </div>
       </div>
 
-      {/* --- PRINT SLIP (Hindi Translation + Full Address) --- */}
       <div style={{ display: "none" }}>
         <div ref={printRef}>
             {filteredGroups.filter((g:any) => selectedGroupIds.includes(g.key)).map((group:any) => (
@@ -320,24 +327,21 @@ const Orders = () => {
                             <h3 style={{ fontSize: "16px", fontWeight: "bold", margin: "0", color: "black" }}>|| स्वामीनारायण विजयते ||</h3>
                             <h2 style={{ fontSize: "22px", fontWeight: "bold", margin: "0" }}>WHEATFLOW</h2>
                         </div>
-                        <div style={{ fontSize: "12px", marginBottom: "2mm", borderBottom: "1px solid #eee", paddingBottom: "1mm" }}><div style={{ display: "flex", justifyContent: "space-between" }}><span><strong>Date:</strong> {new Date(group.date).toLocaleDateString("en-IN")}</span></div></div>
+                        <div style={{ fontSize: "12px", marginBottom: "2mm", borderBottom: "1px solid #eee", paddingBottom: "1mm" }}><div style={{ display: "flex", justifyContent: "space-between", fontWeight: "bold", fontSize: "15px" }}><span><strong>Date:</strong> {new Date(group.date).toLocaleDateString("en-IN")}</span></div></div>
                         
-                        {/* CUSTOMER DETAILS WITH FULL ADDRESS IN HINDI */}
                         <div style={{ fontSize: "12px", marginBottom: "3mm" }}>
-                            <p style={{ fontWeight: "bold", fontSize: "15px", textTransform: "uppercase", margin: "2px 0" }}>{group.customer?.name}</p>
-                            {/* Full Address Added Here */}
+                            <p style={{ fontWeight: "bold", fontSize: "15px", textTransform: "uppercase", margin: "2px 0" }}>{group.customer?.name}</p> <br />
                             <p style={{ margin: "0", fontWeight: "bold", fontSize: "15px" }}>{group.customer?.address}</p>
-                            <p style={{ margin: "0", fontWeight: "bold", fontSize: "15px"}}>{group.sub_area && `${group.sub_area}, `} {group.customer?.areas?.area_name}</p>
+                            <p style={{ margin: "0", fontWeight: "bold", fontSize: "15px"}}>{group.sub_area && `${group.sub_area}, `} {group.customer?.areas?.area_name}</p> <br />
                             <p style={{ fontWeight: "bold", margin: "2px 0", fontSize: "15px" }}>Mob: {group.customer?.phone}</p>
                         </div>
 
-                        {/* PRODUCT TABLE IN HINDI */}
                         <table style={{ width: "100%", fontSize: "15px", borderCollapse: "collapse", marginBottom: "3mm" }}>
                             <thead>
                                 <tr style={{ borderTop: "1px solid black", borderBottom: "1px solid black" }}>
-                                    <th style={{ textAlign: "left", padding: "1mm 0" }}>विवरण (Item)</th>
-                                    <th style={{ textAlign: "right", fontWeight: "bold", fontSize: "15px" }}>मात्रा (Qty)</th>
-                                    <th style={{ textAlign: "right", fontWeight: "bold", fontSize: "15px" }}>रकम (Amt)</th>
+                                    <th style={{ textAlign: "left", padding: "1mm 0", width: "40%" }}>विवरण (Item)</th>
+                                    <th style={{ textAlign: "center", fontWeight: "bold", fontSize: "15px", width: "30%" }}>मात्रा (Qty)</th>
+                                    <th style={{ textAlign: "right", fontWeight: "bold", fontSize: "15px", width: "30%" }}>रकम (Amt)</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -345,7 +349,6 @@ const Orders = () => {
                                     const item = group.products[p];
                                     if(item.qty > 0) return (
                                         <tr key={p}>
-                                            {/* Translate Product Name */}
                                             <td style={{ padding: "1.5mm 0", fontWeight: "bold", fontSize: "15px" }}>{productTranslations[p] || p}</td>
                                             <td style={{ textAlign: "center", fontWeight: "bold", fontSize: "15px" }}>{item.qty} गुनी</td>
                                             <td style={{ textAlign: "right", fontWeight: "bold", fontSize: "15px" }}>₹{item.amount}</td>
@@ -356,7 +359,6 @@ const Orders = () => {
                             </tbody>
                         </table>
                         
-                        {/* TOTAL */}
                         <div style={{ fontSize: "16px", borderTop: "1px dashed black", paddingTop: "2mm", textAlign: "right", fontWeight: "bold" }}>
                             <div style={{ display: "flex", justifyContent: "space-between" }}>
                                 <span>कुल (Total):</span>
@@ -364,17 +366,16 @@ const Orders = () => {
                             </div>
                         </div>
                         
-                        {/* FOOTER */}
                         <div style={{ marginTop: "15mm", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
-                            <div style={{ fontSize: "10px", maxWidth: "50%" }}>
+                            <div style={{ fontSize: "15px", maxWidth: "50%" }}>
                                 {group.driver ? (
                                     <>
-                                        <div>डिलिवरी (Delivery By):</div>
+                                        <div style={{ fontWeight: "bold" }}>डिलिवरी (Delivery By):</div>
                                         <div style={{ fontWeight: "bold" }}>{group.driver.name}</div>
-                                        <div>{group.driver.phone}</div>
+                                        <div style={{ fontWeight: "bold" }}>{group.driver.phone}</div>
                                     </>
                                 ) : (
-                                    <div>स्वयं पिकअप (Self Pickup)</div>
+                                    <div style={{ fontWeight: "bold", fontSize: "15px" }}>स्वयं पिकअप (Self Pickup)</div>
                                 )}
                             </div>
                             <div style={{ textAlign: "center" }}>

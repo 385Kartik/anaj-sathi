@@ -17,12 +17,10 @@ const Drivers = () => {
   const [open, setOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
 
-  // --- MULTIPLE FILTER STATES ---
-  const [filterText, setFilterText] = useState(""); // Name, Phone, Vehicle
-  const [filterArea, setFilterArea] = useState("all"); // Area Dropdown
-  const [filterSubArea, setFilterSubArea] = useState(""); // Sub Area Text
+  const [filterText, setFilterText] = useState(""); 
+  const [filterArea, setFilterArea] = useState("all"); 
+  const [filterSubArea, setFilterSubArea] = useState(""); 
 
-  // Fields (Form)
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [vehicle, setVehicle] = useState("");
@@ -30,10 +28,8 @@ const Drivers = () => {
   const [areaId, setAreaId] = useState("");
   const [subArea, setSubArea] = useState("");
 
-  // Edit Fields
   const [editingDriver, setEditingDriver] = useState<any>(null);
 
-  // Queries
   const { data: areas } = useQuery({ queryKey: ["areas"], queryFn: async () => { const { data } = await supabase.from("areas").select("*").order("area_name"); return data || []; } });
   
   const { data: drivers } = useQuery({
@@ -44,7 +40,6 @@ const Drivers = () => {
     },
   });
 
-  // Fetch Existing Sub Areas for Dual Input
   const { data: subAreaOptions } = useQuery({
     queryKey: ["sub-areas-list"],
     queryFn: async () => {
@@ -58,7 +53,6 @@ const Drivers = () => {
     }
   });
 
-  // --- SMART FILTER LOGIC (AND CONDITION) ---
   const filteredDrivers = drivers?.filter((d: any) => {
     const matchesText = !filterText || 
         d.name.toLowerCase().includes(filterText.toLowerCase()) || 
@@ -67,9 +61,7 @@ const Drivers = () => {
         (d.address && d.address.toLowerCase().includes(filterText.toLowerCase()));
 
     const matchesArea = filterArea === "all" || d.area_id === filterArea;
-
-    const matchesSubArea = !filterSubArea || 
-        (d.sub_area && d.sub_area.toLowerCase().includes(filterSubArea.toLowerCase()));
+    const matchesSubArea = !filterSubArea || (d.sub_area && d.sub_area.toLowerCase().includes(filterSubArea.toLowerCase()));
 
     return matchesText && matchesArea && matchesSubArea;
   });
@@ -78,21 +70,56 @@ const Drivers = () => {
       setName(""); setPhone(""); setVehicle(""); setAddress(""); setAreaId(""); setSubArea(""); setEditingDriver(null);
   };
 
-  const clearFilters = () => {
-      setFilterText("");
-      setFilterArea("all");
-      setFilterSubArea("");
+  const clearFilters = () => { setFilterText(""); setFilterArea("all"); setFilterSubArea(""); };
+
+  // --- SMART AUTO-ASSIGN DRIVER TO ORDERS ---
+  const assignDriverToMatchingOrders = async (driverId: string, dAreaId: string, dSubArea: string) => {
+      if(!dAreaId) return; // Need at least Main Area to match
+      
+      // First find customers matching this area and sub_area
+      let custQuery = supabase.from("customers").select("id").eq("area_id", dAreaId);
+      
+      const { data: matchedCustomers } = await custQuery;
+      if (!matchedCustomers || matchedCustomers.length === 0) return;
+
+      const customerIds = matchedCustomers.map(c => c.id);
+
+      // Now update orders for these customers where sub_area matches (and driver is not yet assigned)
+      let updateQuery = supabase.from("orders")
+            .update({ driver_id: driverId })
+            .in("customer_id", customerIds)
+            .is("driver_id", null); // Only assign if no driver is currently assigned
+
+      // If Driver has a specific sub-area, strictly match it. 
+      // If Driver's sub-area is empty, assign to all unassigned orders in the main Area.
+      if(dSubArea && dSubArea.trim() !== "") {
+          updateQuery = updateQuery.eq("sub_area", dSubArea);
+      }
+
+      await updateQuery;
   };
 
   const addDriver = useMutation({
     mutationFn: async () => {
       if (!/^\d{10}$/.test(phone)) throw new Error("Phone number must be exactly 10 digits");
-      // @ts-ignore
-      const { error } = await supabase.from("drivers").insert({ name, phone, vehicle_number: vehicle || null, address: address || null, area_id: areaId || null, sub_area: subArea || null });
+      
+      // 1. Insert Driver
+      const { data: newDriver, error } = await (supabase.from("drivers") as any)
+          .insert({ name, phone, vehicle_number: vehicle || null, address: address || null, area_id: areaId || null, sub_area: subArea || null })
+          .select("id")
+          .single();
+          
       if (error) throw error;
+
+      // 2. Auto-Assign
+      if(newDriver) {
+          await assignDriverToMatchingOrders(newDriver.id, areaId, subArea);
+      }
     },
     onSuccess: () => {
-      toast.success("Driver added!"); queryClient.invalidateQueries({ queryKey: ["drivers"] });
+      toast.success("Driver added & assigned to matching pending orders!"); 
+      queryClient.invalidateQueries({ queryKey: ["drivers"] });
+      queryClient.invalidateQueries({ queryKey: ["orders"] }); // Refresh orders to show new driver
       setOpen(false); resetForm();
     },
     onError: (e: any) => toast.error(e.message),
@@ -101,11 +128,19 @@ const Drivers = () => {
   const updateDriver = useMutation({
     mutationFn: async () => {
         if (!/^\d{10}$/.test(phone)) throw new Error("Phone number must be exactly 10 digits");
-        // @ts-ignore
-        const { error } = await supabase.from("drivers").update({ name, phone, vehicle_number: vehicle || null, address: address || null, area_id: areaId || null, sub_area: subArea || null }).eq("id", editingDriver.id);
+        
+        const { error } = await supabase.from("drivers").update({ name, phone, vehicle_number: vehicle || null, address: address || null, area_id: areaId || null, sub_area: subArea || null } as any).eq("id", editingDriver.id);
         if(error) throw error;
+
+        // Auto-assign again in case area/sub-area changed
+        await assignDriverToMatchingOrders(editingDriver.id, areaId, subArea);
     },
-    onSuccess: () => { toast.success("Updated!"); queryClient.invalidateQueries({ queryKey: ["drivers"] }); setEditOpen(false); resetForm(); },
+    onSuccess: () => { 
+        toast.success("Updated & Orders Re-synced!"); 
+        queryClient.invalidateQueries({ queryKey: ["drivers"] }); 
+        queryClient.invalidateQueries({ queryKey: ["orders"] }); 
+        setEditOpen(false); resetForm(); 
+    },
     onError: (e: any) => toast.error(e.message),
   });
 
@@ -130,7 +165,6 @@ const Drivers = () => {
       setEditOpen(true);
   };
 
-  // Reusable Form Content with Dual Sub Area Logic
   const renderFormContent = (action: () => void, isEdit: boolean) => (
     <div className="space-y-4 pt-4">
         <div className="grid grid-cols-2 gap-4">
@@ -147,7 +181,6 @@ const Drivers = () => {
                 </Select>
             </div>
             
-            {/* --- NEW DUAL SUB AREA LOGIC --- */}
             <div>
                 <Label>Sub Area</Label>
                 <div className="flex gap-2 mt-1">
@@ -170,7 +203,7 @@ const Drivers = () => {
             </div>
 
         </div>
-        <Button onClick={action} disabled={!name || !phone} className="w-full mt-2">{isEdit ? "Update" : "Add"}</Button>
+        <Button onClick={action} disabled={!name || !phone} className="w-full mt-2">{isEdit ? "Update" : "Add Driver & Assign"}</Button>
     </div>
   );
 
@@ -189,45 +222,24 @@ const Drivers = () => {
         </div>
       </PageHeader>
 
-      {/* --- MULTI-FILTER SECTION --- */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 bg-card p-4 rounded-xl border shadow-sm">
-        
-        {/* 1. Text Search */}
         <div className="relative">
              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-             <Input 
-                value={filterText} 
-                onChange={(e) => setFilterText(e.target.value)} 
-                placeholder="Search Name / Phone..." 
-                className="pl-9 h-10"
-             />
+             <Input value={filterText} onChange={(e) => setFilterText(e.target.value)} placeholder="Search Name / Phone..." className="pl-9 h-10" />
         </div>
-
-        {/* 2. Area Filter */}
         <div>
             <Select value={filterArea} onValueChange={setFilterArea}>
-                <SelectTrigger className="h-10">
-                    <SelectValue placeholder="Filter by Area" />
-                </SelectTrigger>
+                <SelectTrigger className="h-10"><SelectValue placeholder="Filter by Area" /></SelectTrigger>
                 <SelectContent>
                     <SelectItem value="all">All Areas</SelectItem>
                     {areas?.map((a) => <SelectItem key={a.id} value={a.id}>{a.area_name}</SelectItem>)}
                 </SelectContent>
             </Select>
         </div>
-
-        {/* 3. Sub-Area Filter */}
         <div className="relative">
              <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-             <Input 
-                value={filterSubArea} 
-                onChange={(e) => setFilterSubArea(e.target.value)} 
-                placeholder="Filter Sub-Area..." 
-                className="pl-9 h-10"
-             />
+             <Input value={filterSubArea} onChange={(e) => setFilterSubArea(e.target.value)} placeholder="Filter Sub-Area..." className="pl-9 h-10" />
         </div>
-
-        {/* 4. Clear Button */}
         <Button variant="ghost" onClick={clearFilters} className="h-10 text-muted-foreground hover:text-destructive">
             <X className="w-4 h-4 mr-2" /> Clear Filters
         </Button>
@@ -247,7 +259,7 @@ const Drivers = () => {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredDrivers?.length === 0 ? <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No drivers found matching filters</TableCell></TableRow> : filteredDrivers?.map((d: any) => (
+            {filteredDrivers?.length === 0 ? <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No drivers found</TableCell></TableRow> : filteredDrivers?.map((d: any) => (
               <TableRow key={d.id} className="hover:bg-muted/30">
                 <TableCell className="font-medium"><div className="flex items-center gap-2"><Truck className="w-4 h-4 text-primary" />{d.name}</div></TableCell>
                 <TableCell>{d.phone}</TableCell>
