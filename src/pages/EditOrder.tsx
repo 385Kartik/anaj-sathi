@@ -45,6 +45,7 @@ const EditOrder = () => {
   const { data: areas } = useQuery({ queryKey: ["areas"], queryFn: async () => { const { data } = await supabase.from("areas").select("*").order("area_name"); return data || []; } });
   const { data: drivers } = useQuery({ queryKey: ["drivers"], queryFn: async () => { const { data } = await supabase.from("drivers").select("*").order("name"); return data || []; } });
 
+  // Fetch Sub Areas
   const { data: subAreaOptions } = useQuery({
     queryKey: ["sub-areas-list"],
     queryFn: async () => {
@@ -64,16 +65,32 @@ const EditOrder = () => {
   });
 
   const { data: siblingOrders, isLoading: siblingsLoading } = useQuery({
-    queryKey: ["sibling-orders", anchorOrder?.customer_id, anchorOrder?.delivery_date],
+    queryKey: ["sibling-orders", anchorOrder?.customer_id, anchorOrder?.delivery_date, anchorOrder?.order_date],
     enabled: !!anchorOrder,
     queryFn: async () => {
-      const dateKey = anchorOrder.delivery_date || anchorOrder.order_date;
-      const { data } = await (supabase.from("orders").select("*") as any)
-        .eq("customer_id", anchorOrder.customer_id)
-        .eq("sub_area", anchorOrder.sub_area || "") 
-        .gte("created_at", `${dateKey}T00:00:00`)
-        .lte("created_at", `${dateKey}T23:59:59`);
-      return data || [];
+      let query = supabase.from("orders").select("*").eq("customer_id", anchorOrder.customer_id);
+
+      // Handle old orders where sub_area might be completely null
+      if (anchorOrder.sub_area) {
+          query = query.eq("sub_area", anchorOrder.sub_area);
+      } else {
+          query = query.is("sub_area", null);
+      }
+
+      // Handle dates cleanly without strict timezones which break old orders
+      if (anchorOrder.delivery_date) {
+          query = query.eq("delivery_date", anchorOrder.delivery_date);
+      } else if (anchorOrder.order_date) {
+          query = query.eq("order_date", anchorOrder.order_date);
+      }
+
+      const { data } = await query;
+      
+      // ULTIMATE FALLBACK: If query fails to find siblings, at least return the anchor order itself
+      if (!data || data.length === 0) {
+          return [anchorOrder];
+      }
+      return data;
     },
   });
 
@@ -92,10 +109,9 @@ const EditOrder = () => {
 
       const loadProducts = async () => {
         const newProducts = await Promise.all(PRODUCT_TYPES.map(async (pType) => {
-            // FIX 1: Map existing orders correctly to show exact Old Quantity
             let existing = siblingOrders.find((o: any) => o.product_type === pType);
             
-            // If pType is 'Other', check if there's any product not in PRODUCT_TYPES list
+            // Fallback for 'Other' matching
             if (pType === "Other" && !existing) {
                 existing = siblingOrders.find((o: any) => !PRODUCT_TYPES.includes(o.product_type) && o.product_type !== "Null");
             }
@@ -109,8 +125,7 @@ const EditOrder = () => {
 
             return {
                 key: pType,
-                // FIX 2: Set qty to existing quantity so it shows up in input
-                qty: existing ? String(existing.quantity_kg) : "", 
+                qty: existing ? String(existing.quantity_kg) : "",
                 rate: rate,
                 orderId: existing ? existing.id : null,
                 oldQty: existing ? Number(existing.quantity_kg) : 0
@@ -161,11 +176,7 @@ const EditOrder = () => {
         for (const p of products) {
             const newQty = Number(p.qty || 0);
             
-            // FIX 3: Calculate difference correctly. 
-            // If old was 5, new is 6. Diff = 5 - 6 = -1 (Means deduct 1 more from stock)
-            // If old was 5, new is 2. Diff = 5 - 2 = 3 (Means add 3 back to stock)
             const diff = p.oldQty - newQty; 
-            
             if (diff !== 0 && p.key !== "Other" && p.key !== "Null") {
                 const { data: stock } = await supabase.from("stock").select("*").eq("product_type", p.key).maybeSingle();
                 if (stock) {
@@ -179,27 +190,19 @@ const EditOrder = () => {
                 remainingPaid = Math.max(0, remainingPaid - linePaid);
 
                 const orderData = {
-                    customer_id: anchorOrder.customer_id, 
-                    product_type: p.key, 
-                    quantity_kg: newQty, // FIX 4: Saves EXACTLY what is in the box, doesn't add to old
-                    rate_per_kg: p.rate, 
-                    total_amount: lineTotal, 
-                    amount_paid: linePaid,
+                    customer_id: anchorOrder.customer_id, product_type: p.key, quantity_kg: newQty,
+                    rate_per_kg: p.rate, total_amount: lineTotal, amount_paid: linePaid,
                     driver_id: form.driverId === "none" ? null : form.driverId,
-                    status: form.status, 
-                    sub_area: form.subArea,
-                    delivery_date: anchorOrder.delivery_date
+                    status: form.status, sub_area: form.subArea,
+                    delivery_date: anchorOrder.delivery_date, created_at: anchorOrder.created_at 
                 };
 
                 if (p.orderId) {
-                    // Update existing row
                     await supabase.from("orders").update(orderData as any).eq("id", p.orderId);
                 } else {
-                    // Insert new row if didn't exist before
                     await supabase.from("orders").insert(orderData as any);
                 }
             } else {
-                // If new Qty is 0 but it had an ID, user removed it. Delete it.
                 if (p.orderId) {
                     await supabase.from("orders").delete().eq("id", p.orderId);
                 }
@@ -339,4 +342,6 @@ const EditOrder = () => {
     </div>
   );
 };
+
 export default EditOrder;
+                      
