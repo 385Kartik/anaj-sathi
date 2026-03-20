@@ -249,7 +249,7 @@ const Orders = () => {
 
                         {selectedGroupIds.length > 0 && <Button size="sm" onClick={() => handlePrint()} className="bg-purple-600 hover:bg-purple-700 text-white gap-2"><Printer className="w-4 h-4" /> Print Selected ({selectedGroupIds.length})</Button>}
                         <Button size="sm" variant="outline" onClick={exportToExcel} className="gap-2"><FileSpreadsheet className="w-4 h-4 text-green-600" /> Excel</Button>
-                        <Button size="sm" variant="destructive" onClick={() => { if (confirm("Clean old history?")) clearOldOrders.mutate(); }} className="gap-2"><AlertTriangle className="w-4 h-4" /> Cleanup</Button>
+                        {/* <Button size="sm" variant="destructive" onClick={() => { if (confirm("Clean old history?")) clearOldOrders.mutate(); }} className="gap-2"><AlertTriangle className="w-4 h-4" /> Cleanup</Button> */}
                         <Link to="/orders/new"><Button size="sm" className="bg-primary text-primary-foreground gap-2"><PlusCircle className="w-4 h-4" /> New Order</Button></Link>
                     </span>
 
