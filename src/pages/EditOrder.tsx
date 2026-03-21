@@ -10,13 +10,13 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, ArrowLeft, Save } from "lucide-react";
 
-const PRODUCT_TYPES = ["Tukdi", "Sasiya", "Tukdi D", "Sasiya D", "Other"];
+const PRODUCT_TYPES = ["Sasiya D", "Sasiya", "Tukdi D", "Tukdi", "Other"];
 
 const productTranslations: Record<string, string> = {
+    "Sasiya D": "सासिया दिवेल", 
+    "Sasiya": "सासिया", 
+    "Tukdi D": "टुकड़ी दिवेल", 
   "Tukdi": "टुकड़ी", 
-  "Sasiya": "सासिया", 
-  "Tukdi D": "टुकड़ी दिवेल", 
-  "Sasiya D": "सासिया दिवेल", 
   "Other": "अन्य"
 };
 

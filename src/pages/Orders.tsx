@@ -14,13 +14,13 @@ import { toast } from "sonner";
 import { useReactToPrint } from "react-to-print";
 import * as XLSX from "xlsx";
 
-const PRODUCT_COLS = ["Tukdi", "Sasiya", "Tukdi D", "Sasiya D"];
+const PRODUCT_COLS = ["Sasiya D", "Sasiya", "Tukdi D", "Tukdi"];
 
 const productTranslations: Record<string, string> = {
-    "Tukdi": "टुकड़ी",
+    "Sasiya D": "सासिया दिवेल",
     "Sasiya": "सासिया",
     "Tukdi D": "टुकड़ी दिवेल",
-    "Sasiya D": "सासिया दिवेल",
+    "Tukdi": "टुकड़ी",
     "Other": "अन्य",
     "Null": "अन्य"
 };
@@ -93,10 +93,10 @@ const Orders = () => {
                     driver_id: o.driver_id,
                     searchString: `${o.customers?.name || ""} ${o.customers?.phone || ""} ${o.sub_area || ""} ${o.customers?.areas?.area_name || ""}`.toLowerCase(),
                     products: {
-                        "Tukdi": { qty: 0, amount: 0, ids: [], statuses: new Set() },
+                        "Sasiya D": { qty: 0, amount: 0, ids: [], statuses: new Set() },
                         "Sasiya": { qty: 0, amount: 0, ids: [], statuses: new Set() },
                         "Tukdi D": { qty: 0, amount: 0, ids: [], statuses: new Set() },
-                        "Sasiya D": { qty: 0, amount: 0, ids: [], statuses: new Set() },
+                        "Tukdi": { qty: 0, amount: 0, ids: [], statuses: new Set() },
                         "Other": { qty: 0, amount: 0, ids: [], statuses: new Set() }
                     },
                     totalAmount: 0,
@@ -218,10 +218,10 @@ const Orders = () => {
                 "Phone": g.customer?.phone,
                 "Area": g.customer?.areas?.area_name,
                 "Sub Area": g.sub_area,
-                "Tukdi": getExportData("Tukdi"),
+                "Sasiya D": getExportData("Sasiya D"),
                 "Sasiya": getExportData("Sasiya"),
                 "Tukdi D": getExportData("Tukdi D"),
-                "Sasiya D": getExportData("Sasiya D"),
+                "Tukdi": getExportData("Tukdi"),
                 "Total Amount": g.totalAmount,
                 "Pending": g.totalAmount - g.amountPaid,
                 "Driver": g.driver?.name || "-"
@@ -483,4 +483,5 @@ const Orders = () => {
         </div>
     );
 };
+
 export default Orders;
