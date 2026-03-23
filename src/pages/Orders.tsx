@@ -76,6 +76,8 @@ const Orders = () => {
         const groups: Record<string, any> = {};
 
         orders.forEach((o: any) => {
+            if (o.product_type === "Null") return;
+
             const dateKey = o.delivery_date || o.order_date;
             const key = `${o.customer_id}_${dateKey}_${o.sub_area || 'NOSUB'}`;
 
@@ -185,6 +187,21 @@ const Orders = () => {
         });
     }, [groupedOrders, searchName, searchPhone, areaFilter, subAreaSearch, paymentFilter, deliveryFilter, driverFilter]);
 
+    // --- NEW LOGIC: Calculate Dynamic Totals for Header based on Filters ---
+    const productTotals = useMemo(() => {
+        const totals: Record<string, number> = {};
+        PRODUCT_COLS.forEach(p => totals[p] = 0);
+
+        filteredGroups.forEach((group: any) => {
+            PRODUCT_COLS.forEach(p => {
+                if (group.products[p] && group.products[p].qty) {
+                    totals[p] += group.products[p].qty;
+                }
+            });
+        });
+        return totals;
+    }, [filteredGroups]);
+
     const toggleGroupSelect = (key: string) => { setSelectedGroupIds(prev => prev.includes(key) ? prev.filter(x => x !== key) : [...prev, key]); };
     const toggleAllGroups = () => { if (selectedGroupIds.length === filteredGroups.length) setSelectedGroupIds([]); else setSelectedGroupIds(filteredGroups.map((g: any) => g.key)); };
 
@@ -243,19 +260,19 @@ const Orders = () => {
             <div className="shrink-0 space-y-4">
                 <PageHeader title="Orders" subtitle="Manage orders & printing">
                     <span className="flex flex-wrap gap-2">
-<Tabs value={deliveryFilter} onValueChange={setDeliveryFilter}>
-                            <TabsList className="h-9"><TabsTrigger value="all" className="text-xs">All Orders</TabsTrigger><TabsTrigger value="pending" className="text-xs">Pending Delivery</TabsTrigger><TabsTrigger value="delivered" className="text-xs">Delivered</TabsTrigger></TabsList>
+                        <Tabs value={deliveryFilter} onValueChange={setDeliveryFilter}>
+                            <TabsList className="h-9">
+                                <TabsTrigger value="all" className="text-xs">All Orders</TabsTrigger>
+                                <TabsTrigger value="pending" className="text-xs">Pending Delivery</TabsTrigger>
+                                <TabsTrigger value="delivered" className="text-xs">Delivered</TabsTrigger>
+                            </TabsList>
                         </Tabs>
 
                         {selectedGroupIds.length > 0 && <Button size="sm" onClick={() => handlePrint()} className="bg-purple-600 hover:bg-purple-700 text-white gap-2"><Printer className="w-4 h-4" /> Print Selected ({selectedGroupIds.length})</Button>}
                         <Button size="sm" variant="outline" onClick={exportToExcel} className="gap-2"><FileSpreadsheet className="w-4 h-4 text-green-600" /> Excel</Button>
-                        {/* <Button size="sm" variant="destructive" onClick={() => { if (confirm("Clean old history?")) clearOldOrders.mutate(); }} className="gap-2"><AlertTriangle className="w-4 h-4" /> Cleanup</Button> */}
                         <Link to="/orders/new"><Button size="sm" className="bg-primary text-primary-foreground gap-2"><PlusCircle className="w-4 h-4" /> New Order</Button></Link>
                     </span>
-
                 </PageHeader>
-
-
 
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 bg-card p-2 rounded-xl border shadow-sm">
                     <Input value={searchNameInput} onChange={e => setSearchNameInput(e.target.value)} placeholder="Search Name..." className="h-9" />
@@ -276,17 +293,30 @@ const Orders = () => {
 
             {/* --- SCROLLABLE TABLE SECTION (Only rows will scroll, Header is Fixed) --- */}
             <div className="flex-1 bg-card border border-border rounded-xl mt-4 flex flex-col min-h-0 shadow-sm relative overflow-hidden">
-                <div className="overflow-auto flex-1 relative scrollbar-thin scrollbar-thumb-gray-300">
+                {/* CSS HACK: [&>div]:!overflow-visible bypasses shadcn's internal table wrap to allow sticky header */}
+                <div className="overflow-auto absolute inset-0 scrollbar-thin scrollbar-thumb-gray-300 [&>div]:!overflow-visible">
                     <Table className="relative w-full">
-                        <TableHeader className="sticky top-0 z-50 shadow-[0_1px_3px_rgba(0,0,0,0.1)] outline outline-1 outline-gray-200">
+                        <TableHeader className="sticky top-0 z-50 shadow-[0_1px_3px_rgba(0,0,0,0.1)] outline outline-1 outline-gray-200 bg-slate-100">
                             <TableRow className="bg-slate-100 hover:bg-slate-100 border-none">
-                                <TableHead className="w-[40px] text-center p-3 bg-slate-100"><Checkbox checked={selectedGroupIds.length === filteredGroups.length && filteredGroups.length > 0} onCheckedChange={toggleAllGroups} /></TableHead>
-                                <TableHead className="min-w-[150px] text-xs font-bold text-gray-700 p-3 bg-slate-100">Customer</TableHead>
-                                {PRODUCT_COLS.map(col => <TableHead key={col} className="text-center text-xs font-bold text-blue-800 min-w-[120px] p-3 bg-slate-100">{col}</TableHead>)}
-                                <TableHead className="text-right text-xs font-bold text-gray-700 p-3 bg-slate-100">Total</TableHead>
-                                <TableHead className="text-right text-xs font-bold text-red-600 p-3 bg-slate-100">Payment</TableHead>
-                                <TableHead className="text-center text-xs font-bold text-gray-700 min-w-[160px] p-3 bg-slate-100">Status / Driver</TableHead>
-                                <TableHead className="text-center text-xs font-bold text-gray-700 p-3 bg-slate-100">Actions</TableHead>
+                                <TableHead className="w-[40px] text-center p-3 bg-slate-100 align-middle"><Checkbox checked={selectedGroupIds.length === filteredGroups.length && filteredGroups.length > 0} onCheckedChange={toggleAllGroups} /></TableHead>
+                                <TableHead className="min-w-[150px] text-xs font-bold text-gray-700 p-3 bg-slate-100 align-middle">Customer</TableHead>
+                                
+                                {/* --- DYNAMIC HEADER TOTALS --- */}
+                                {PRODUCT_COLS.map(col => (
+                                    <TableHead key={col} className="text-center min-w-[120px] p-3 bg-slate-100 align-middle">
+                                        <div className="flex flex-col items-center justify-center gap-1">
+                                            <span className="text-xs font-bold text-blue-800">{col}</span>
+                                            <span className="text-[10px] font-bold text-blue-700 bg-blue-200/50 px-2 py-0.5 rounded-full border border-blue-200">
+                                                {productTotals[col]} Guni
+                                            </span>
+                                        </div>
+                                    </TableHead>
+                                ))}
+
+                                <TableHead className="text-right text-xs font-bold text-gray-700 p-3 bg-slate-100 align-middle">Total</TableHead>
+                                <TableHead className="text-right text-xs font-bold text-red-600 p-3 bg-slate-100 align-middle">Payment</TableHead>
+                                <TableHead className="text-center text-xs font-bold text-gray-700 min-w-[160px] p-3 bg-slate-100 align-middle">Status / Driver</TableHead>
+                                <TableHead className="text-center text-xs font-bold text-gray-700 p-3 bg-slate-100 align-middle">Actions</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -310,7 +340,7 @@ const Orders = () => {
                                             </div>
                                         </TableCell>
 
-                                        {/* COMPACT PRODUCT CARDS */}
+                                        {/* YOUR ORIGINAL SPACING/DESIGN REVERTED */}
                                         {PRODUCT_COLS.map(colKey => {
                                             const pData = group.products[colKey];
                                             const hasData = pData && pData.qty > 0;
@@ -356,7 +386,6 @@ const Orders = () => {
                                                     </SelectContent>
                                                 </Select>
 
-                                                {/* FIX FOR DRIVER SQUISHING: Line clamp added to prevent wrapping */}
                                                 <Select defaultValue={group.driver_id || "none"} onValueChange={(val) => {
                                                     const selectedInGroup = group.allItemIds.filter((id: string) => selectedItems.includes(id));
                                                     const idsToUpdate = selectedInGroup.length > 0 ? selectedInGroup : group.allItemIds;
@@ -369,7 +398,7 @@ const Orders = () => {
                                                         </div>
                                                     </SelectTrigger>
                                                     <SelectContent>
-                                                        <SelectItem value="none" className="text-[11px] font-medium text-muted-foreground">Unassigned</SelectItem>
+                                                        <SelectItem value="none" className="text-[11px] font-medium text-muted-foreground">Unassigned / Self</SelectItem>
                                                         {drivers?.map((d: any) => (
                                                             <SelectItem key={d.id} value={d.id} className="text-[11px] font-semibold">
                                                                 {d.name} <span className="text-gray-400 font-normal">({d.areas?.area_name || "All"})</span>
