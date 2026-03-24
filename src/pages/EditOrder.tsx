@@ -10,12 +10,12 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, ArrowLeft, Save } from "lucide-react";
 
-const PRODUCT_TYPES = ["Sasiya D", "Sasiya", "Tukdi D", "Tukdi", "Other"];
+const PRODUCT_COLS = ["Sasiya D", "Sasiya", "Tukdi D", "Tukdi", "Other"];
 
 const productTranslations: Record<string, string> = {
-    "Sasiya D": "सासिया दिवेल", 
-    "Sasiya": "सासिया", 
-    "Tukdi D": "टुकड़ी दिवेल", 
+  "Sasiya D": "सासिया दिवेल", 
+  "Sasiya": "सासिया", 
+  "Tukdi D": "टुकड़ी दिवेल", 
   "Tukdi": "टुकड़ी", 
   "Other": "अन्य"
 };
@@ -35,17 +35,16 @@ const EditOrder = () => {
 
   const [form, setForm] = useState({
     customerName: "", phone: "", address: "", areaId: "", subArea: "", 
-    amountPaid: "0", driverId: "none", status: "pending"
+    amountCash: "0", amountOnline: "0", driverId: "none", status: "pending"
   });
 
   const [products, setProducts] = useState<ProductRow[]>(
-    PRODUCT_TYPES.map(p => ({ key: p, qty: "", rate: 0, orderId: null, oldQty: 0 }))
+    PRODUCT_COLS.map(p => ({ key: p, qty: "", rate: 0, orderId: null, oldQty: 0 }))
   );
 
   const { data: areas } = useQuery({ queryKey: ["areas"], queryFn: async () => { const { data } = await supabase.from("areas").select("*").order("area_name"); return data || []; } });
   const { data: drivers } = useQuery({ queryKey: ["drivers"], queryFn: async () => { const { data } = await supabase.from("drivers").select("*").order("name"); return data || []; } });
 
-  // Fetch Sub Areas
   const { data: subAreaOptions } = useQuery({
     queryKey: ["sub-areas-list"],
     queryFn: async () => {
@@ -70,32 +69,35 @@ const EditOrder = () => {
     queryFn: async () => {
       let query = supabase.from("orders").select("*").eq("customer_id", anchorOrder.customer_id);
 
-      // Handle old orders where sub_area might be completely null
-      if (anchorOrder.sub_area) {
-          query = query.eq("sub_area", anchorOrder.sub_area);
-      } else {
-          query = query.is("sub_area", null);
-      }
+      if (anchorOrder.sub_area) query = query.eq("sub_area", anchorOrder.sub_area);
+      else query = query.is("sub_area", null);
 
-      // Handle dates cleanly without strict timezones which break old orders
-      if (anchorOrder.delivery_date) {
-          query = query.eq("delivery_date", anchorOrder.delivery_date);
-      } else if (anchorOrder.order_date) {
-          query = query.eq("order_date", anchorOrder.order_date);
-      }
+      if (anchorOrder.delivery_date) query = query.eq("delivery_date", anchorOrder.delivery_date);
+      else if (anchorOrder.order_date) query = query.eq("order_date", anchorOrder.order_date);
 
       const { data } = await query;
-      
-      // ULTIMATE FALLBACK: If query fails to find siblings, at least return the anchor order itself
-      if (!data || data.length === 0) {
-          return [anchorOrder];
-      }
+      if (!data || data.length === 0) return [anchorOrder];
       return data;
     },
   });
 
   useEffect(() => {
     if (anchorOrder && siblingOrders && areas) {
+      
+      // --- DB SAFE: Extract Cash/Online from Notes ---
+      let initCash = 0; let initOnline = 0;
+      siblingOrders.forEach((o: any) => {
+          if (o.notes && o.notes.includes("PAY_SPLIT:")) {
+              try {
+                  const s = JSON.parse(o.notes.split("PAY_SPLIT:")[1]);
+                  initCash += Number(s.cash) || 0;
+                  initOnline += Number(s.online) || 0;
+              } catch(e) { initCash += Number(o.amount_paid) || 0; }
+          } else {
+              initCash += Number(o.amount_paid) || 0; // Old defaults to cash
+          }
+      });
+
       setForm({
         customerName: anchorOrder.customers?.name || "",
         phone: anchorOrder.customers?.phone || "",
@@ -104,25 +106,22 @@ const EditOrder = () => {
         subArea: anchorOrder.sub_area || "",
         driverId: anchorOrder.driver_id || "none",
         status: anchorOrder.status || "pending",
-        amountPaid: String(siblingOrders.reduce((sum: number, o: any) => sum + (Number(o.amount_paid) || 0), 0))
+        amountCash: String(initCash),
+        amountOnline: String(initOnline)
       });
 
       const loadProducts = async () => {
-        const newProducts = await Promise.all(PRODUCT_TYPES.map(async (pType) => {
+        const newProducts = await Promise.all(PRODUCT_COLS.map(async (pType) => {
             let existing = siblingOrders.find((o: any) => o.product_type === pType);
-            
-            // Fallback for 'Other' matching
             if (pType === "Other" && !existing) {
-                existing = siblingOrders.find((o: any) => !PRODUCT_TYPES.includes(o.product_type) && o.product_type !== "Null");
+                existing = siblingOrders.find((o: any) => !PRODUCT_COLS.includes(o.product_type) && o.product_type !== "Null");
             }
-
             let rate = 0;
             if (existing) {
                 rate = existing.rate_per_kg;
             } else {
                 rate = await getRate(pType, anchorOrder.customers?.area_id);
             }
-
             return {
                 key: pType,
                 qty: existing ? String(existing.quantity_kg) : "",
@@ -163,7 +162,7 @@ const EditOrder = () => {
   };
 
   const grandTotal = products.reduce((sum, p) => sum + (Number(p.qty || 0) * p.rate), 0);
-  const pending = grandTotal - Number(form.amountPaid || 0);
+  const pendingCalc = grandTotal - (Number(form.amountCash || 0) + Number(form.amountOnline || 0));
 
   const saveChanges = useMutation({
     mutationFn: async () => {
@@ -171,7 +170,8 @@ const EditOrder = () => {
             name: form.customerName, phone: form.phone, address: form.address, area_id: form.areaId
         }).eq("id", anchorOrder.customer_id);
 
-        let remainingPaid = Number(form.amountPaid);
+        let remainingCash = Number(form.amountCash || 0);
+        let remainingOnline = Number(form.amountOnline || 0);
 
         for (const p of products) {
             const newQty = Number(p.qty || 0);
@@ -186,12 +186,21 @@ const EditOrder = () => {
 
             if (newQty > 0) {
                 const lineTotal = newQty * p.rate;
-                const linePaid = Math.min(lineTotal, remainingPaid);
-                remainingPaid = Math.max(0, remainingPaid - linePaid);
+                
+                const lineCash = Math.min(lineTotal, remainingCash);
+                remainingCash -= lineCash;
+                const lineOnline = Math.min(lineTotal - lineCash, remainingOnline);
+                remainingOnline -= lineOnline;
+                
+                const linePaid = lineCash + lineOnline;
+                
+                // --- DB SAFE: Pack split into Notes string ---
+                const splitStr = `PAY_SPLIT:${JSON.stringify({cash: lineCash, online: lineOnline})}`;
 
                 const orderData = {
                     customer_id: anchorOrder.customer_id, product_type: p.key, quantity_kg: newQty,
                     rate_per_kg: p.rate, total_amount: lineTotal, amount_paid: linePaid,
+                    notes: splitStr,
                     driver_id: form.driverId === "none" ? null : form.driverId,
                     status: form.status, sub_area: form.subArea,
                     delivery_date: anchorOrder.delivery_date, created_at: anchorOrder.created_at 
@@ -236,21 +245,11 @@ const EditOrder = () => {
                 <div>
                     <Label>Sub Area / Location</Label>
                     <div className="flex gap-2 mt-1">
-                        <Select 
-                            value={subAreaOptions?.includes(form.subArea) ? form.subArea : ""} 
-                            onValueChange={(v) => setForm({...form, subArea: v})}
-                        >
+                        <Select value={subAreaOptions?.includes(form.subArea) ? form.subArea : ""} onValueChange={(v) => setForm({...form, subArea: v})}>
                             <SelectTrigger className="w-[120px]"><SelectValue placeholder="List..." /></SelectTrigger>
-                            <SelectContent>
-                                {subAreaOptions?.map((item: any) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
-                            </SelectContent>
+                            <SelectContent>{subAreaOptions?.map((item: any) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent>
                         </Select>
-                        <Input 
-                            className="flex-1"
-                            value={form.subArea} 
-                            onChange={(e) => setForm({...form, subArea: e.target.value})} 
-                            placeholder="Or type new..." 
-                        />
+                        <Input className="flex-1" value={form.subArea} onChange={(e) => setForm({...form, subArea: e.target.value})} placeholder="Or type new..." />
                     </div>
                 </div>
 
@@ -273,7 +272,7 @@ const EditOrder = () => {
                 <div><Label>Status</Label>
                     <Select value={form.status} onValueChange={v => setForm({...form, status: v})}>
                         <SelectTrigger><SelectValue/></SelectTrigger>
-                        <SelectContent><SelectItem value="pending">Pending</SelectItem><SelectItem value="delivered">Delivered</SelectItem><SelectItem value="cancelled">Cancelled</SelectItem></SelectContent>
+                        <SelectContent><SelectItem value="pending">Pending</SelectItem><SelectItem value="delivered">Delivered</SelectItem></SelectContent>
                     </Select>
                 </div>
             </div>
@@ -296,12 +295,8 @@ const EditOrder = () => {
                     {products.map((p, idx) => (
                         <div key={p.key} className="grid grid-cols-12 gap-3 items-center bg-muted/20 p-2 rounded border">
                             <div className="col-span-4 font-medium text-sm">{productTranslations[p.key] || p.key}</div>
-                            <div className="col-span-3">
-                                <Input type="number" className="h-8 text-right" value={p.rate} readOnly={p.key !== "Other"} onChange={(e) => handleProductChange(idx, "rate", e.target.value)} />
-                            </div>
-                            <div className="col-span-3">
-                                <Input type="number" className={`h-8 text-center font-bold ${p.qty ? "bg-white border-primary" : "bg-transparent"}`} placeholder="0" value={p.qty} onChange={(e) => handleProductChange(idx, "qty", e.target.value)} />
-                            </div>
+                            <div className="col-span-3"><Input type="number" className="h-8 text-right" value={p.rate} readOnly={p.key !== "Other"} onChange={(e) => handleProductChange(idx, "rate", e.target.value)} /></div>
+                            <div className="col-span-3"><Input type="number" className={`h-8 text-center font-bold ${p.qty ? "bg-white border-primary" : "bg-transparent"}`} placeholder="0" value={p.qty} onChange={(e) => handleProductChange(idx, "qty", e.target.value)} /></div>
                             <div className="col-span-2 text-right text-sm font-bold">₹{(Number(p.qty || 0) * p.rate).toLocaleString()}</div>
                         </div>
                     ))}
@@ -316,18 +311,25 @@ const EditOrder = () => {
             </div>
 
             <div className="bg-card border rounded-xl p-5">
-                <h3 className="font-semibold border-b pb-4 mb-4">Payment</h3>
+                <h3 className="font-semibold border-b pb-4 mb-4">Payment Split</h3>
                 <div className="flex gap-4 items-end">
                     <div className="flex-1">
-                        <Label>Amount Paid (Total for all items)</Label>
+                        <Label>Cash Paid</Label>
                         <div className="relative mt-1">
                             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">₹</span>
-                            <Input type="number" className="pl-8 text-lg font-bold" value={form.amountPaid} onChange={e => setForm({...form, amountPaid: e.target.value})} />
+                            <Input type="number" className="pl-8 text-lg font-bold text-green-700" value={form.amountCash} onChange={e => setForm({...form, amountCash: e.target.value})} placeholder="0" />
+                        </div>
+                    </div>
+                    <div className="flex-1">
+                        <Label>Online Paid</Label>
+                        <div className="relative mt-1">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">₹</span>
+                            <Input type="number" className="pl-8 text-lg font-bold text-blue-700" value={form.amountOnline} onChange={e => setForm({...form, amountOnline: e.target.value})} placeholder="0" />
                         </div>
                     </div>
                     <div className="flex-1 text-right bg-muted/30 p-2 rounded">
                         <div className="text-sm text-muted-foreground">Pending Balance</div>
-                        <div className={`text-xl font-bold ${pending > 0 ? "text-destructive" : "text-green-600"}`}>₹{pending.toLocaleString()}</div>
+                        <div className={`text-xl font-bold ${pendingCalc > 0 ? "text-destructive" : "text-green-600"}`}>₹{pendingCalc.toLocaleString()}</div>
                     </div>
                 </div>
             </div>
@@ -344,4 +346,3 @@ const EditOrder = () => {
 };
 
 export default EditOrder;
-                      

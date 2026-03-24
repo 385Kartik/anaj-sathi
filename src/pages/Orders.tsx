@@ -29,12 +29,10 @@ const Orders = () => {
     const queryClient = useQueryClient();
     const navigate = useNavigate();
 
-    // --- REAL-TIME INPUT STATE ---
     const [searchNameInput, setSearchNameInput] = useState("");
     const [searchPhoneInput, setSearchPhoneInput] = useState("");
     const [subAreaSearchInput, setSubAreaSearchInput] = useState("");
 
-    // --- DEBOUNCED SEARCH STATE (FOR LAG FREE PERFORMANCE) ---
     const [searchName, setSearchName] = useState("");
     const [searchPhone, setSearchPhone] = useState("");
     const [subAreaSearch, setSubAreaSearch] = useState("");
@@ -48,7 +46,6 @@ const Orders = () => {
     const [selectedItems, setSelectedItems] = useState<string[]>([]);
     const printRef = useRef<HTMLDivElement>(null);
 
-    // DEBOUNCING LOGIC
     useEffect(() => {
         const timer1 = setTimeout(() => setSearchName(searchNameInput), 300);
         const timer2 = setTimeout(() => setSearchPhone(searchPhoneInput), 300);
@@ -102,7 +99,9 @@ const Orders = () => {
                         "Other": { qty: 0, amount: 0, ids: [], statuses: new Set() }
                     },
                     totalAmount: 0,
-                    amountPaid: 0
+                    amountPaid: 0,
+                    cashPaid: 0,
+                    onlinePaid: 0
                 };
             }
 
@@ -112,6 +111,20 @@ const Orders = () => {
             g.allStatuses.add(o.status);
             g.totalAmount += Number(o.total_amount || 0);
             g.amountPaid += Number(o.amount_paid || 0);
+
+            // --- EXTRACT CASH / ONLINE FROM NOTES ---
+            let c = 0, on = 0;
+            if (o.notes && o.notes.includes("PAY_SPLIT:")) {
+                try {
+                    const s = JSON.parse(o.notes.split("PAY_SPLIT:")[1]);
+                    c = Number(s.cash) || 0;
+                    on = Number(s.online) || 0;
+                } catch(e) { c = Number(o.amount_paid) || 0; }
+            } else {
+                c = Number(o.amount_paid) || 0; // Old orders default to cash
+            }
+            g.cashPaid += c;
+            g.onlinePaid += on;
 
             let pType = o.product_type;
             if (!PRODUCT_COLS.includes(pType)) pType = "Other";
@@ -187,19 +200,21 @@ const Orders = () => {
         });
     }, [groupedOrders, searchName, searchPhone, areaFilter, subAreaSearch, paymentFilter, deliveryFilter, driverFilter]);
 
-    // --- NEW LOGIC: Calculate Dynamic Totals for Header based on Filters ---
-    const productTotals = useMemo(() => {
-        const totals: Record<string, number> = {};
-        PRODUCT_COLS.forEach(p => totals[p] = 0);
+    // --- DYNAMIC HEADER TOTALS (GUNI + AMOUNT + CASH/ONLINE) ---
+    const filterTotals = useMemo(() => {
+        const productQty: Record<string, number> = {};
+        PRODUCT_COLS.forEach(p => productQty[p] = 0);
+        
+        let totalAmt = 0; let totalCash = 0; let totalOnline = 0;
 
-        filteredGroups.forEach((group: any) => {
-            PRODUCT_COLS.forEach(p => {
-                if (group.products[p] && group.products[p].qty) {
-                    totals[p] += group.products[p].qty;
-                }
-            });
+        filteredGroups.forEach((g: any) => {
+            PRODUCT_COLS.forEach(p => { if (g.products[p] && g.products[p].qty) productQty[p] += g.products[p].qty; });
+            totalAmt += g.totalAmount;
+            totalCash += g.cashPaid;
+            totalOnline += g.onlinePaid;
         });
-        return totals;
+        
+        return { productQty, totalAmt, totalCash, totalOnline };
     }, [filteredGroups]);
 
     const toggleGroupSelect = (key: string) => { setSelectedGroupIds(prev => prev.includes(key) ? prev.filter(x => x !== key) : [...prev, key]); };
@@ -240,6 +255,8 @@ const Orders = () => {
                 "Tukdi D": getExportData("Tukdi D"),
                 "Tukdi": getExportData("Tukdi"),
                 "Total Amount": g.totalAmount,
+                "Cash Paid": g.cashPaid,      // EXCEL FIX
+                "Online Paid": g.onlinePaid,  // EXCEL FIX
                 "Pending": g.totalAmount - g.amountPaid,
                 "Driver": g.driver?.name || "-"
             };
@@ -255,8 +272,6 @@ const Orders = () => {
 
     return (
         <div className="flex flex-col h-[calc(100vh)] md:-m-8 md:p-4">
-
-            {/* --- STICKY TOP SECTION (Will not scroll) --- */}
             <div className="shrink-0 space-y-4">
                 <PageHeader title="Orders" subtitle="Manage orders & printing">
                     <span className="flex flex-wrap gap-2">
@@ -267,7 +282,6 @@ const Orders = () => {
                                 <TabsTrigger value="delivered" className="text-xs">Delivered</TabsTrigger>
                             </TabsList>
                         </Tabs>
-
                         {selectedGroupIds.length > 0 && <Button size="sm" onClick={() => handlePrint()} className="bg-purple-600 hover:bg-purple-700 text-white gap-2"><Printer className="w-4 h-4" /> Print Selected ({selectedGroupIds.length})</Button>}
                         <Button size="sm" variant="outline" onClick={exportToExcel} className="gap-2"><FileSpreadsheet className="w-4 h-4 text-green-600" /> Excel</Button>
                         <Link to="/orders/new"><Button size="sm" className="bg-primary text-primary-foreground gap-2"><PlusCircle className="w-4 h-4" /> New Order</Button></Link>
@@ -291,9 +305,7 @@ const Orders = () => {
                 </div>
             </div>
 
-            {/* --- SCROLLABLE TABLE SECTION (Only rows will scroll, Header is Fixed) --- */}
             <div className="flex-1 bg-card border border-border rounded-xl mt-4 flex flex-col min-h-0 shadow-sm relative overflow-hidden">
-                {/* CSS HACK: [&>div]:!overflow-visible bypasses shadcn's internal table wrap to allow sticky header */}
                 <div className="overflow-auto absolute inset-0 scrollbar-thin scrollbar-thumb-gray-300 [&>div]:!overflow-visible">
                     <Table className="relative w-full">
                         <TableHeader className="sticky top-0 z-50 shadow-[0_1px_3px_rgba(0,0,0,0.1)] outline outline-1 outline-gray-200 bg-slate-100">
@@ -301,20 +313,34 @@ const Orders = () => {
                                 <TableHead className="w-[40px] text-center p-3 bg-slate-100 align-middle"><Checkbox checked={selectedGroupIds.length === filteredGroups.length && filteredGroups.length > 0} onCheckedChange={toggleAllGroups} /></TableHead>
                                 <TableHead className="min-w-[150px] text-xs font-bold text-gray-700 p-3 bg-slate-100 align-middle">Customer</TableHead>
                                 
-                                {/* --- DYNAMIC HEADER TOTALS --- */}
                                 {PRODUCT_COLS.map(col => (
                                     <TableHead key={col} className="text-center min-w-[120px] p-3 bg-slate-100 align-middle">
                                         <div className="flex flex-col items-center justify-center gap-1">
                                             <span className="text-xs font-bold text-blue-800">{col}</span>
                                             <span className="text-[10px] font-bold text-blue-700 bg-blue-200/50 px-2 py-0.5 rounded-full border border-blue-200">
-                                                {productTotals[col]} Guni
+                                                {filterTotals.productQty[col]} Guni
                                             </span>
                                         </div>
                                     </TableHead>
                                 ))}
 
-                                <TableHead className="text-right text-xs font-bold text-gray-700 p-3 bg-slate-100 align-middle">Total</TableHead>
-                                <TableHead className="text-right text-xs font-bold text-red-600 p-3 bg-slate-100 align-middle">Payment</TableHead>
+                                <TableHead className="text-right text-xs font-bold text-gray-700 p-3 bg-slate-100 align-middle">
+                                    <div className="flex flex-col items-end gap-1">
+                                        <span>Total</span>
+                                        <span className="text-[10px] font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">
+                                            ₹{filterTotals.totalAmt.toLocaleString("en-IN")}
+                                        </span>
+                                    </div>
+                                </TableHead>
+                                <TableHead className="text-right text-xs font-bold text-red-600 p-3 bg-slate-100 align-middle">
+                                    <div className="flex flex-col items-end gap-1">
+                                        <span>Payment</span>
+                                        <div className="flex flex-col items-end text-[9px] font-bold leading-tight bg-green-50 px-1.5 py-0.5 rounded border border-green-200">
+                                            <span className="text-green-700">C: ₹{filterTotals.totalCash.toLocaleString("en-IN")}</span>
+                                            <span className="text-blue-700">O: ₹{filterTotals.totalOnline.toLocaleString("en-IN")}</span>
+                                        </div>
+                                    </div>
+                                </TableHead>
                                 <TableHead className="text-center text-xs font-bold text-gray-700 min-w-[160px] p-3 bg-slate-100 align-middle">Status / Driver</TableHead>
                                 <TableHead className="text-center text-xs font-bold text-gray-700 p-3 bg-slate-100 align-middle">Actions</TableHead>
                             </TableRow>
@@ -340,7 +366,6 @@ const Orders = () => {
                                             </div>
                                         </TableCell>
 
-                                        {/* YOUR ORIGINAL SPACING/DESIGN REVERTED */}
                                         {PRODUCT_COLS.map(colKey => {
                                             const pData = group.products[colKey];
                                             const hasData = pData && pData.qty > 0;
@@ -368,7 +393,17 @@ const Orders = () => {
                                         })}
 
                                         <TableCell className="text-right font-bold align-middle text-[14px] p-2">₹{group.totalAmount.toLocaleString("en-IN")}</TableCell>
-                                        <TableCell className={`text-right font-bold text-[13px] align-middle p-2 ${pending > 0 ? "text-red-600" : "text-green-600"}`}>{pending > 0 ? `₹${pending.toLocaleString("en-IN")}` : "Paid"}</TableCell>
+                                        <TableCell className="text-right align-middle p-2">
+                                            <div className="flex flex-col items-end gap-1">
+                                                <span className={`font-bold text-[13px] ${pending > 0 ? "text-red-600" : "text-green-600"}`}>
+                                                    {pending > 0 ? `P: ₹${pending.toLocaleString("en-IN")}` : "Paid"}
+                                                </span>
+                                                <div className="flex flex-col items-end text-[10px] font-semibold text-gray-600 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-200">
+                                                    <span>Cash: ₹{group.cashPaid.toLocaleString("en-IN")}</span>
+                                                    <span>Online: ₹{group.onlinePaid.toLocaleString("en-IN")}</span>
+                                                </div>
+                                            </div>
+                                        </TableCell>
 
                                         <TableCell className="p-2 align-middle">
                                             <div className="flex flex-col gap-1.5 items-center w-full">
@@ -428,15 +463,10 @@ const Orders = () => {
             <div style={{ display: "none" }}>
                 <div ref={printRef}>
                     {filteredGroups.filter((g: any) => selectedGroupIds.includes(g.key)).map((group: any) => {
-
-                        const groupHasSpecificSelection = group.allItemIds.some((id: string) => selectedItems.includes(id));
-
                         const itemsToPrint = [...PRODUCT_COLS, "Other"].map(p => {
                             const item = group.products[p];
                             if (item.qty === 0) return null;
                             if (deliveryFilter !== "all" && !item.statuses.has(deliveryFilter)) return null;
-                            const isSelected = item.ids.some((id: string) => selectedItems.includes(id));
-                            if (groupHasSpecificSelection && !isSelected) return null;
                             return { name: p, ...item };
                         }).filter(Boolean);
 
