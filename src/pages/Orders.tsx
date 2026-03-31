@@ -29,10 +29,12 @@ const Orders = () => {
     const queryClient = useQueryClient();
     const navigate = useNavigate();
 
+    // --- REAL-TIME INPUT STATE ---
     const [searchNameInput, setSearchNameInput] = useState("");
     const [searchPhoneInput, setSearchPhoneInput] = useState("");
     const [subAreaSearchInput, setSubAreaSearchInput] = useState("");
 
+    // --- DEBOUNCED SEARCH STATE ---
     const [searchName, setSearchName] = useState("");
     const [searchPhone, setSearchPhone] = useState("");
     const [subAreaSearch, setSubAreaSearch] = useState("");
@@ -46,6 +48,7 @@ const Orders = () => {
     const [selectedItems, setSelectedItems] = useState<string[]>([]);
     const printRef = useRef<HTMLDivElement>(null);
 
+    // DEBOUNCING LOGIC
     useEffect(() => {
         const timer1 = setTimeout(() => setSearchName(searchNameInput), 300);
         const timer2 = setTimeout(() => setSearchPhone(searchPhoneInput), 300);
@@ -112,7 +115,7 @@ const Orders = () => {
             g.totalAmount += Number(o.total_amount || 0);
             g.amountPaid += Number(o.amount_paid || 0);
 
-            // --- EXTRACT CASH / ONLINE FROM NOTES ---
+            // --- CASH / ONLINE LOGIC ---
             let c = 0, on = 0;
             if (o.notes && o.notes.includes("PAY_SPLIT:")) {
                 try {
@@ -121,7 +124,7 @@ const Orders = () => {
                     on = Number(s.online) || 0;
                 } catch(e) { c = Number(o.amount_paid) || 0; }
             } else {
-                c = Number(o.amount_paid) || 0; // Old orders default to cash
+                c = Number(o.amount_paid) || 0;
             }
             g.cashPaid += c;
             g.onlinePaid += on;
@@ -200,7 +203,7 @@ const Orders = () => {
         });
     }, [groupedOrders, searchName, searchPhone, areaFilter, subAreaSearch, paymentFilter, deliveryFilter, driverFilter]);
 
-    // --- DYNAMIC HEADER TOTALS (GUNI + AMOUNT + CASH/ONLINE) ---
+    // --- DYNAMIC HEADER TOTALS ---
     const filterTotals = useMemo(() => {
         const productQty: Record<string, number> = {};
         PRODUCT_COLS.forEach(p => productQty[p] = 0);
@@ -220,6 +223,7 @@ const Orders = () => {
     const toggleGroupSelect = (key: string) => { setSelectedGroupIds(prev => prev.includes(key) ? prev.filter(x => x !== key) : [...prev, key]); };
     const toggleAllGroups = () => { if (selectedGroupIds.length === filteredGroups.length) setSelectedGroupIds([]); else setSelectedGroupIds(filteredGroups.map((g: any) => g.key)); };
 
+    // --- INDIVIDUAL PRODUCT TOGGLE LOGIC ---
     const toggleItemSelect = (itemIds: string[]) => {
         setSelectedItems(prev => {
             const next = new Set(prev);
@@ -255,8 +259,8 @@ const Orders = () => {
                 "Tukdi D": getExportData("Tukdi D"),
                 "Tukdi": getExportData("Tukdi"),
                 "Total Amount": g.totalAmount,
-                "Cash Paid": g.cashPaid,      // EXCEL FIX
-                "Online Paid": g.onlinePaid,  // EXCEL FIX
+                "Cash Paid": g.cashPaid,
+                "Online Paid": g.onlinePaid,
                 "Pending": g.totalAmount - g.amountPaid,
                 "Driver": g.driver?.name || "-"
             };
@@ -272,6 +276,8 @@ const Orders = () => {
 
     return (
         <div className="flex flex-col h-[calc(100vh)] md:-m-8 md:p-4">
+
+            {/* --- STICKY TOP SECTION --- */}
             <div className="shrink-0 space-y-4">
                 <PageHeader title="Orders" subtitle="Manage orders & printing">
                     <span className="flex flex-wrap gap-2">
@@ -282,6 +288,7 @@ const Orders = () => {
                                 <TabsTrigger value="delivered" className="text-xs">Delivered</TabsTrigger>
                             </TabsList>
                         </Tabs>
+
                         {selectedGroupIds.length > 0 && <Button size="sm" onClick={() => handlePrint()} className="bg-purple-600 hover:bg-purple-700 text-white gap-2"><Printer className="w-4 h-4" /> Print Selected ({selectedGroupIds.length})</Button>}
                         <Button size="sm" variant="outline" onClick={exportToExcel} className="gap-2"><FileSpreadsheet className="w-4 h-4 text-green-600" /> Excel</Button>
                         <Link to="/orders/new"><Button size="sm" className="bg-primary text-primary-foreground gap-2"><PlusCircle className="w-4 h-4" /> New Order</Button></Link>
@@ -305,6 +312,7 @@ const Orders = () => {
                 </div>
             </div>
 
+            {/* --- SCROLLABLE TABLE SECTION --- */}
             <div className="flex-1 bg-card border border-border rounded-xl mt-4 flex flex-col min-h-0 shadow-sm relative overflow-hidden">
                 <div className="overflow-auto absolute inset-0 scrollbar-thin scrollbar-thumb-gray-300 [&>div]:!overflow-visible">
                     <Table className="relative w-full">
@@ -313,6 +321,7 @@ const Orders = () => {
                                 <TableHead className="w-[40px] text-center p-3 bg-slate-100 align-middle"><Checkbox checked={selectedGroupIds.length === filteredGroups.length && filteredGroups.length > 0} onCheckedChange={toggleAllGroups} /></TableHead>
                                 <TableHead className="min-w-[150px] text-xs font-bold text-gray-700 p-3 bg-slate-100 align-middle">Customer</TableHead>
                                 
+                                {/* --- DYNAMIC HEADER TOTALS --- */}
                                 {PRODUCT_COLS.map(col => (
                                     <TableHead key={col} className="text-center min-w-[120px] p-3 bg-slate-100 align-middle">
                                         <div className="flex flex-col items-center justify-center gap-1">
@@ -366,21 +375,22 @@ const Orders = () => {
                                             </div>
                                         </TableCell>
 
+                                        {/* --- INDIVIDUAL PRODUCT CHECKBOXES RESTORED --- */}
                                         {PRODUCT_COLS.map(colKey => {
                                             const pData = group.products[colKey];
                                             const hasData = pData && pData.qty > 0;
-                                            const isChecked = pData.ids.every((id: string) => selectedItems.includes(id));
+                                            const isChecked = pData?.ids?.length > 0 && pData.ids.every((id: string) => selectedItems.includes(id));
                                             const isVisibleInTab = deliveryFilter === "all" || pData.statuses.has(deliveryFilter);
 
                                             return (
                                                 <TableCell key={colKey} className={`text-center align-middle p-2 ${hasData && isVisibleInTab ? '' : 'text-muted-foreground/30 opacity-40'}`}>
                                                     {hasData && isVisibleInTab ? (
-                                                        <div className="flex flex-col items-center justify-center p-2 bg-white rounded-xl border border-gray-200">
+                                                        <div className="flex flex-col items-center justify-center p-2 bg-white rounded-xl border border-gray-200 shadow-sm">
                                                             <div className="flex items-center gap-1.5 mb-1">
                                                                 <Checkbox checked={isChecked} onCheckedChange={() => toggleItemSelect(pData.ids)} className="w-3.5 h-3.5 rounded-sm border-gray-400 data-[state=checked]:bg-primary" />
                                                                 <span className="font-bold text-[13px] whitespace-nowrap">{pData.qty} Guni</span>
                                                             </div>
-                                                            <div className="flex items-center gap-1.5">
+                                                            <div className="flex flex-col items-center gap-0.5">
                                                                 <span className="text-[11px] text-muted-foreground font-bold">₹{pData.amount}</span>
                                                                 <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wider ${pData.statuses.has('pending') ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}`}>
                                                                     {Array.from(pData.statuses).join(' & ')}
@@ -393,6 +403,7 @@ const Orders = () => {
                                         })}
 
                                         <TableCell className="text-right font-bold align-middle text-[14px] p-2">₹{group.totalAmount.toLocaleString("en-IN")}</TableCell>
+                                        
                                         <TableCell className="text-right align-middle p-2">
                                             <div className="flex flex-col items-end gap-1">
                                                 <span className={`font-bold text-[13px] ${pending > 0 ? "text-red-600" : "text-green-600"}`}>
@@ -463,10 +474,15 @@ const Orders = () => {
             <div style={{ display: "none" }}>
                 <div ref={printRef}>
                     {filteredGroups.filter((g: any) => selectedGroupIds.includes(g.key)).map((group: any) => {
+
+                        const groupHasSpecificSelection = group.allItemIds.some((id: string) => selectedItems.includes(id));
+
                         const itemsToPrint = [...PRODUCT_COLS, "Other"].map(p => {
                             const item = group.products[p];
                             if (item.qty === 0) return null;
                             if (deliveryFilter !== "all" && !item.statuses.has(deliveryFilter)) return null;
+                            const isSelected = item.ids.some((id: string) => selectedItems.includes(id));
+                            if (groupHasSpecificSelection && !isSelected) return null;
                             return { name: p, ...item };
                         }).filter(Boolean);
 
