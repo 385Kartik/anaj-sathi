@@ -76,9 +76,9 @@ const Orders = () => {
         const groups: Record<string, any> = {};
 
         orders.forEach((o: any) => {
-            if (o.product_type === "Null") return;
+            // "Null" check removed so new year customers show up
 
-            const dateKey = o.delivery_date || o.order_date;
+            const dateKey = o.delivery_date || o.order_date || o.created_at || new Date().toISOString();
             const key = `${o.customer_id}_${dateKey}_${o.sub_area || 'NOSUB'}`;
 
             if (!groups[key]) {
@@ -397,7 +397,9 @@ const Orders = () => {
                                                                 </span>
                                                             </div>
                                                         </div>
-                                                    ) : "-"}
+                                                    ) : (
+                                                        <span className="font-bold text-[13px] text-muted-foreground">0 Guni</span>
+                                                    )}
                                                 </TableCell>
                                             )
                                         })}
