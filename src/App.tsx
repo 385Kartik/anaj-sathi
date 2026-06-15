@@ -14,6 +14,7 @@ import Reports from "./pages/Reports";
 import SettingsPage from "./pages/SettingsPage";
 import NotFound from "./pages/NotFound";
 import EditOrder from "./pages/EditOrder";
+import Expenses from "./pages/Expenses";
 
 const queryClient = new QueryClient();
 
@@ -33,6 +34,7 @@ const App = () => (
             <Route path="/drivers" element={<Drivers />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/expenses" element={<Expenses />} />
             <Route path="/orders/edit/:id" element={<EditOrder />} />
           </Route>
           <Route path="*" element={<NotFound />} />

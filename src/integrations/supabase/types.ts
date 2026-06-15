@@ -99,25 +99,63 @@ export type Database = {
       }
       drivers: {
         Row: {
+          address: string | null
+          area_id: string | null
           created_at: string
           id: string
           name: string
           phone: string
+          sub_area: string | null
           vehicle_number: string | null
         }
         Insert: {
+          address?: string | null
+          area_id?: string | null
           created_at?: string
           id?: string
           name: string
           phone: string
+          sub_area?: string | null
           vehicle_number?: string | null
         }
         Update: {
+          address?: string | null
+          area_id?: string | null
           created_at?: string
           id?: string
           name?: string
           phone?: string
+          sub_area?: string | null
           vehicle_number?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "drivers_area_id_fkey"
+            columns: ["area_id"]
+            isOneToOne: false
+            referencedRelation: "areas"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+      expenses: {
+        Row: {
+          amount: number
+          created_at: string
+          id: string
+          reason: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          id?: string
+          reason: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          id?: string
+          reason?: string
         }
         Relationships: []
       }
@@ -139,6 +177,7 @@ export type Database = {
           quantity_kg: number
           rate_per_kg: number
           status: string
+          sub_area: string | null
           total_amount: number
           updated_at: string
         }
@@ -159,6 +198,7 @@ export type Database = {
           quantity_kg: number
           rate_per_kg: number
           status?: string
+          sub_area?: string | null
           total_amount: number
           updated_at?: string
         }
@@ -179,6 +219,7 @@ export type Database = {
           quantity_kg?: number
           rate_per_kg?: number
           status?: string
+          sub_area?: string | null
           total_amount?: number
           updated_at?: string
         }

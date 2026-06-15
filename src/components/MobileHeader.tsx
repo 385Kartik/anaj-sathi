@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { Menu, X, Wheat, LayoutDashboard, ShoppingCart, PlusCircle, Users, Package, Truck, BarChart3, Settings } from "lucide-react";
+import { Menu, X, Wheat, LayoutDashboard, ShoppingCart, PlusCircle, Users, Package, Truck, BarChart3, Settings, Wallet } from "lucide-react";
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
@@ -11,6 +11,7 @@ const navItems = [
   { to: "/drivers", icon: Truck, label: "Drivers" },
   { to: "/reports", icon: BarChart3, label: "Reports" },
   { to: "/settings", icon: Settings, label: "Settings" },
+  { to: "/expenses", icon: Wallet, label: "Expenses" }
 ];
 
 const MobileHeader = () => {
