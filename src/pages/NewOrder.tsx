@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, User, ShoppingBag, CreditCard, Truck } from "lucide-react";
 
+<<<<<<< HEAD
 const PRODUCT_TYPES = ["Tukdi", "Sasiya", "Tukdi D", "Sasiya D", "Other"];
 
 const productTranslations: Record<string, string> = {
@@ -18,6 +19,18 @@ const productTranslations: Record<string, string> = {
   "Tukdi D": "Tukdi Divel", 
   "Sasiya D": "Sasiya Divel", 
   "Other": "Other"
+=======
+// Backend IDs (English for Database matching)
+const PRODUCT_TYPES = ["Tukdi", "Sasiya", "Tukdi D", "Sasiya D", "Other"];
+
+// Hindi Translations for UI
+const productTranslations: Record<string, string> = {
+  "Tukdi": "टुकड़ी", 
+  "Sasiya": "सासिया", 
+  "Tukdi D": "टुकड़ी डिवेल", 
+  "Sasiya D": "सासिया डिवेल", 
+  "Other": "अन्य"
+>>>>>>> 12342de6c6fad9e34d10aba06d3ab5453fff437f
 };
 
 interface ProductRow {
@@ -30,15 +43,27 @@ const NewOrder = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   
+<<<<<<< HEAD
+=======
+  // Basic Form State
+>>>>>>> 12342de6c6fad9e34d10aba06d3ab5453fff437f
   const [form, setForm] = useState({
     customerName: "", phone: "", address: "", areaId: "", subArea: "", 
     amountPaid: "", driverId: "", deliveryDate: "", notes: "",
   });
 
+<<<<<<< HEAD
+=======
+  // Fixed 5 Product Rows State
+>>>>>>> 12342de6c6fad9e34d10aba06d3ab5453fff437f
   const [products, setProducts] = useState<ProductRow[]>(
     PRODUCT_TYPES.map(p => ({ key: p, qty: "", rate: 0 }))
   );
 
+<<<<<<< HEAD
+=======
+  // --- QUERIES ---
+>>>>>>> 12342de6c6fad9e34d10aba06d3ab5453fff437f
   const { data: areas } = useQuery({
     queryKey: ["areas"],
     queryFn: async () => {
@@ -64,6 +89,7 @@ const NewOrder = () => {
       return Array.from(allSubs).sort();
     }
   });
+<<<<<<< HEAD
 
   const getRate = async (pType: string, areaId: string) => {
     if (!pType || pType === "Other" || !areaId) return 0;
@@ -73,20 +99,62 @@ const NewOrder = () => {
     return globalRate ? globalRate.rate_per_kg : 0;
   };
 
+=======
+
+  // --- RATE LOGIC ---
+  const getRate = async (pType: string, areaId: string) => {
+    if (!pType || pType === "Other" || !areaId) return 0;
+    
+    // 1. Try Area Rate
+    const { data: areaRate } = await supabase.from("area_rates")
+      .select("rate_per_kg")
+      .eq("area_id", areaId)
+      .eq("product_type", pType)
+      .maybeSingle();
+      
+    if (areaRate && areaRate.rate_per_kg > 0) return areaRate.rate_per_kg;
+
+    // 2. Global Rate
+    const { data: globalRate } = await supabase.from("product_rates")
+      .select("rate_per_kg")
+      .eq("product_type", pType)
+      .maybeSingle();
+
+    return globalRate ? globalRate.rate_per_kg : 0;
+  };
+
+  // --- EFFECTS ---
+  
+  // Update Rates when Area Changes
+>>>>>>> 12342de6c6fad9e34d10aba06d3ab5453fff437f
   useEffect(() => {
     const updateRates = async () => {
         if(!form.areaId) return;
         const updatedItems = await Promise.all(products.map(async (item) => {
+<<<<<<< HEAD
             if (item.key === "Other") return item;
+=======
+            // Preserve manual rate for "Other" if entered, else 0
+            if (item.key === "Other") return item;
+            
+>>>>>>> 12342de6c6fad9e34d10aba06d3ab5453fff437f
             const newRate = await getRate(item.key, form.areaId);
             return { ...item, rate: newRate };
         }));
         setProducts(updatedItems);
     };
     updateRates();
+<<<<<<< HEAD
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.areaId]);
 
+=======
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.areaId]);
+
+  // --- HANDLERS ---
+
+>>>>>>> 12342de6c6fad9e34d10aba06d3ab5453fff437f
   const handleProductChange = (index: number, field: keyof ProductRow, val: any) => {
     const newProducts = [...products];
     newProducts[index] = { ...newProducts[index], [field]: val };
@@ -119,11 +187,20 @@ const NewOrder = () => {
     }
   };
 
+<<<<<<< HEAD
   const grandTotal = products.reduce((sum, item) => sum + (Number(item.qty || 0) * item.rate), 0);
   const pendingCalc = grandTotal - Number(form.amountPaid || 0);
 
+=======
+  // --- CALCULATIONS ---
+  const grandTotal = products.reduce((sum, item) => sum + (Number(item.qty || 0) * item.rate), 0);
+  const pendingCalc = grandTotal - Number(form.amountPaid || 0);
+
+  // --- SUBMISSION ---
+>>>>>>> 12342de6c6fad9e34d10aba06d3ab5453fff437f
   const createOrder = useMutation({
     mutationFn: async () => {
+      // 1. Customer Logic
       let customerId: string;
       const { data: existing } = await supabase.from("customers").select("id").eq("phone", form.phone).maybeSingle();
 
@@ -138,15 +215,30 @@ const NewOrder = () => {
         customerId = newCustomer.id;
       }
 
+<<<<<<< HEAD
       let remainingPayment = Number(form.amountPaid || 0);
 
       for (const item of products) {
           const qty = Number(item.qty || 0);
+=======
+      // 2. Distribute Payment & Create Orders
+      let remainingPayment = Number(form.amountPaid || 0);
+
+      // Loop through the 5 rows
+      for (const item of products) {
+          const qty = Number(item.qty || 0);
+          
+>>>>>>> 12342de6c6fad9e34d10aba06d3ab5453fff437f
           if (qty > 0) {
               const itemTotal = qty * item.rate;
               const paidForThisItem = Math.min(itemTotal, remainingPayment);
               remainingPayment = Math.max(0, remainingPayment - paidForThisItem);
 
+<<<<<<< HEAD
+=======
+              // Insert
+              // @ts-ignore
+>>>>>>> 12342de6c6fad9e34d10aba06d3ab5453fff437f
               const { error: orderError } = await supabase.from("orders").insert({
                 customer_id: customerId, 
                 product_type: item.key, 
@@ -158,10 +250,18 @@ const NewOrder = () => {
                 delivery_date: form.deliveryDate || new Date().toISOString().split('T')[0],
                 sub_area: form.subArea,
                 status: "pending"
+<<<<<<< HEAD
               } as any);
               
               if (orderError) throw orderError;
 
+=======
+              });
+              
+              if (orderError) throw orderError;
+
+              // Stock Deduction
+>>>>>>> 12342de6c6fad9e34d10aba06d3ab5453fff437f
               if(item.key !== "Other" && item.key !== "Null") {
                  const { data: stockItem } = await supabase.from("stock").select("*").eq("product_type", item.key).maybeSingle();
                  if (stockItem) {
@@ -177,10 +277,25 @@ const NewOrder = () => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+<<<<<<< HEAD
     if (!form.customerName || !form.phone || !form.areaId) { toast.error("Customer details missing."); return; }
     const hasItems = products.some(p => Number(p.qty) > 0);
     if (!hasItems) { toast.error("Please enter quantity for at least one product."); return; }
     if (!/^\d{10}$/.test(form.phone)) { toast.error("Invalid phone number."); return; }
+=======
+    
+    // Check Mandatory Fields
+    if (!form.customerName || !form.phone) { toast.error("Customer Name and Phone are required."); return; }
+    if (!form.address) { toast.error("Address is mandatory."); return; }
+    if (!form.subArea) { toast.error("Sub Area / Location is mandatory."); return; }
+    if (!form.areaId) { toast.error("Main Area is mandatory."); return; }
+    
+    const hasItems = products.some(p => Number(p.qty) > 0);
+    if (!hasItems) { toast.error("Please enter quantity for at least one product."); return; }
+    
+    if (!/^\d{10}$/.test(form.phone)) { toast.error("Invalid phone number."); return; }
+    
+>>>>>>> 12342de6c6fad9e34d10aba06d3ab5453fff437f
     createOrder.mutate();
   };
 
@@ -197,6 +312,7 @@ const NewOrder = () => {
                     <div className="space-y-3">
                         <div><Label>Phone *</Label><Input value={form.phone} onChange={(e) => handlePhoneChange(e.target.value)} maxLength={10} placeholder="Search..." /></div>
                         <div><Label>Name *</Label><Input value={form.customerName} onChange={(e) => setForm({...form, customerName: e.target.value})} /></div>
+<<<<<<< HEAD
                         <div><Label>Address</Label><Input value={form.address} onChange={(e) => setForm({...form, address: e.target.value})} placeholder="Full Address" /></div>
                         <div><Label>Area *</Label>
                             <Select value={form.areaId} onValueChange={(v) => setForm({...form, areaId: v})}>
@@ -208,6 +324,13 @@ const NewOrder = () => {
                         {/* --- NEW DUAL SUB AREA LOGIC --- */}
                         <div>
                             <Label>Sub Area / Location</Label>
+=======
+                        <div><Label>Address *</Label><Input value={form.address} onChange={(e) => setForm({...form, address: e.target.value})} placeholder="Full Address" /></div>
+                        
+                        {/* SWAPPED: Sub Area now comes first */}
+                        <div>
+                            <Label>Sub Area / Location *</Label>
+>>>>>>> 12342de6c6fad9e34d10aba06d3ab5453fff437f
                             <div className="flex gap-2 mt-1">
                                 <Select 
                                     value={subAreaOptions?.includes(form.subArea) ? form.subArea : ""} 
@@ -227,6 +350,16 @@ const NewOrder = () => {
                             </div>
                         </div>
 
+<<<<<<< HEAD
+=======
+                        {/* SWAPPED: Main Area now comes second */}
+                        <div><Label>Main Area *</Label>
+                            <Select value={form.areaId} onValueChange={(v) => setForm({...form, areaId: v})}>
+                                <SelectTrigger><SelectValue placeholder="Select Area" /></SelectTrigger>
+                                <SelectContent>{areas?.map((a) => <SelectItem key={a.id} value={a.id}>{a.area_name}</SelectItem>)}</SelectContent>
+                            </Select>
+                        </div>
+>>>>>>> 12342de6c6fad9e34d10aba06d3ab5453fff437f
                     </div>
                 </div>
 
@@ -249,6 +382,10 @@ const NewOrder = () => {
                 <div className="bg-card border rounded-xl p-5 shadow-sm">
                     <div className="flex items-center gap-2 mb-4 border-b pb-2"><ShoppingBag className="w-5 h-5 text-primary" /> <h2 className="font-semibold">Order Items</h2></div>
                     
+<<<<<<< HEAD
+=======
+                    {/* Headers in Hindi/English */}
+>>>>>>> 12342de6c6fad9e34d10aba06d3ab5453fff437f
                     <div className="grid grid-cols-12 gap-3 mb-2 text-xs font-medium text-muted-foreground px-1">
                         <div className="col-span-4">प्रोडक्ट (PRODUCT)</div>
                         <div className="col-span-3">रेट (RATE)</div>
@@ -256,6 +393,10 @@ const NewOrder = () => {
                         <div className="col-span-2 text-right">कुल (TOTAL)</div>
                     </div>
 
+<<<<<<< HEAD
+=======
+                    {/* Fixed Rows with Hindi Translation */}
+>>>>>>> 12342de6c6fad9e34d10aba06d3ab5453fff437f
                     <div className="space-y-3">
                         {products.map((p, idx) => (
                             <div key={p.key} className="grid grid-cols-12 gap-3 items-center bg-muted/20 p-2 rounded border">
@@ -333,4 +474,8 @@ const NewOrder = () => {
     </div>
   );
 };
+<<<<<<< HEAD
 export default NewOrder;
+=======
+export default NewOrder;
+>>>>>>> 12342de6c6fad9e34d10aba06d3ab5453fff437f

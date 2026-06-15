@@ -76,7 +76,7 @@ const Orders = () => {
         const groups: Record<string, any> = {};
 
         orders.forEach((o: any) => {
-            // "Null" check removed to allow new year entries to show
+            if (o.product_type === "Null") return;
 
             const dateKey = o.delivery_date || o.order_date;
             const key = `${o.customer_id}_${dateKey}_${o.sub_area || 'NOSUB'}`;

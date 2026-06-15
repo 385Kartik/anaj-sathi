@@ -61,16 +61,6 @@ const Customers = () => {
   const filtered = useMemo(() => {
     let list = customers?.filter((c: any) => {
       const stats = customerStats?.[c.id];
-      const subArea = stats?.latestSubArea || "";
-
-      // Allow all customers to show even if they have 0 valid orders
-      // (This fixes the issue where customers disappeared after starting a new year)
-
-      if (filterName && !c.name?.toLowerCase().includes(filterName.toLowerCase())) return false;
-      if (filterPhone && !c.phone?.includes(filterPhone)) return false;
-      if (filterAddress && !c.address?.toLowerCase().includes(filterAddress.toLowerCase())) return false;
-      if (filterArea !== "all" && c.area_id !== filterArea) return false;
-      if (filterSubArea && !subArea.toLowerCase().includes(filterSubArea.toLowerCase())) return false;
       if (statusView === "pending" && !stats?.hasPending) return false;
       if (statusView === "completed" && stats?.hasPending) return false; 
       return true;
